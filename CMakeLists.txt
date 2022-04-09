@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(glyb)
+project(cuterm)
 
 #
 # project settings
@@ -16,6 +16,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
 #
 
 include(CheckCXXCompilerFlag)
+include(CheckSymbolExists)
 
 if(MSVC)
   add_definitions(/MP)
@@ -31,14 +32,6 @@ check_cxx_compiler_flag("-fno-omit-frame-pointer" has_no_omit_fp "int main() { r
 if (has_no_omit_fp)
   add_compile_options(-fno-omit-frame-pointer)
 endif()
-
-#
-# user options
-#
-
-option(GLYB_BUILD_TOOLS "Build glyb tools" ON)
-option(GLYB_BUILD_EXAMPLES "Build glyb examples" ON)
-option(GLYB_BUILD_TESTS "Build glyb tests" ON)
 
 #
 # system libraries
@@ -88,6 +81,7 @@ include_directories(third_party/libpng)
 include_directories(${CMAKE_BINARY_DIR}/third_party/libpng)
 
 ## freetype2
+include_directories(third_party/harfbuzz/src)
 add_subdirectory(third_party/freetype2)
 add_definitions( -DFT_CONFIG_CONFIG_H=\"ftconfig.h\" )
 add_definitions( -DFT_CONFIG_MODULES_H=\"ftmodule.h\" )
@@ -97,7 +91,6 @@ include_directories(third_party/freetype2/include/freetype/config)
 ## harfbuzz
 set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable FreeType Integration" FORCE)
 add_subdirectory(third_party/harfbuzz)
-include_directories(third_party/harfbuzz/src)
 
 ## imgui
 set(IMGUI_SOURCES
@@ -125,9 +118,9 @@ include_directories(third_party/glm)
 # libglyb
 #
 
-include_directories(src)
+include_directories(lib)
 include_directories(examples)
-file(GLOB GLYB_SOURCES src/*.cc src/*.h)
+file(GLOB GLYB_SOURCES lib/*.cc lib/*.h)
 add_library(glyb STATIC ${GLYB_SOURCES})
 add_dependencies(glyb glad-generate-files)
 set_target_properties(glyb PROPERTIES CXX_STANDARD 17)
@@ -141,48 +134,32 @@ list(APPEND GLYB_LIBS
   glyb
   lib_msdfgen)
 
+set(GLAD_LIBRARIES ${GLAD_LIBRARIES} PARENT_SCOPE)
+set(GLYB_LIBS ${GLYB_LIBS} PARENT_SCOPE)
+
 #
 # CLI programs
 #
 
-if(GLYB_BUILD_TOOLS)
-  foreach(prog IN ITEMS bitcode ftkitty ftrender fontdb fontscan genatlas uniscan)
-    add_executable(${prog} examples/${prog}.cc)
-    target_link_libraries(${prog} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
-  endforeach(prog)
+foreach(prog IN ITEMS genatlas)
+  add_executable(${prog} util/${prog}.cc)
+  target_link_libraries(${prog} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
+endforeach(prog)
+
+#
+# Terminal
+#
+
+list(APPEND CMAKE_REQUIRED_LIBRARIES util)
+check_symbol_exists(forkpty libutil.h have_forkpty_libutil_h)
+check_symbol_exists(forkpty pty.h have_forkpty_pty_h)
+if (have_forkpty_libutil_h OR have_forkpty_pty_h)
+  list(APPEND UTIL_LIBS util)
 endif()
 
-#
-# OpenGL examples
-#
-
-if(GLYB_BUILD_EXAMPLES)
-  foreach(prog IN ITEMS glbinpack glemoji glgraph glglyph glfont gllayout glsimple gldemo)
-    add_executable(${prog} examples/${prog}.cc)
-    target_link_libraries(${prog} ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} glfw)
-    target_compile_definitions(${prog} PRIVATE -DHAVE_GLAD)
-    if(WIN32)
-      set_property(TARGET ${prog} PROPERTY WIN32_EXECUTABLE TRUE)
-    endif()
-  endforeach(prog)
-
-  add_executable(glcanvas examples/glcanvas.cc)
-  target_link_libraries(glcanvas ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} glfw imgui)
-  target_compile_definitions(glcanvas PRIVATE -DHAVE_GLAD)
-  if(WIN32)
-    set_property(TARGET glcanvas PROPERTY WIN32_EXECUTABLE TRUE)
-  endif()
-endif()
-
-#
-# glyb tests
-#
-
-if(GLYB_BUILD_TESTS)
-  file(GLOB BINPACK_TESTS tests/*.cc)
-  foreach(src ${BINPACK_TESTS})
-    get_filename_component(name ${src} NAME_WE)
-    add_executable(${name} ${src})
-    target_link_libraries(${name} ${GLYB_LIBS})
-  endforeach(src)
+add_executable(cuterm app/main.cc app/terminal.cc)
+target_link_libraries(cuterm ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
+target_compile_definitions(cuterm PRIVATE -DHAVE_GLAD)
+if(WIN32)
+  set_property(TARGET cuterm PROPERTY WIN32_EXECUTABLE TRUE)
 endif()
