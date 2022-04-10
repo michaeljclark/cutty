@@ -231,7 +231,8 @@ static cu_dim render_loop(cu_term *term, int rows, int cols,
     size_t linecount = term->lines.size();
     for (size_t k = linecount - 1, l = 0; k < linecount && l < rows; k--) {
         font_face_ft *face, *lface = nullptr;
-        cu_line &line = term->lines[k];
+        cu_line line = term->lines[k];
+        line.unpack();
         size_t cellcount = line.cells.size();
         size_t wraplines = cellcount == 0 ? 1
             : linewrap ? (cellcount + cols - 1) / cols : 1;

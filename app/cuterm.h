@@ -66,15 +66,27 @@ enum cu_charset
 
 struct cu_cell
 {
-	uint codepoint : 21;
-	uint flags : 11;
+	uint codepoint;
+	uint flags;
 	uint fg_col;
 	uint bg_col;
 };
 
+enum cu_line_flag
+{
+	cu_line_packed = (1 << 0)
+};
+
 struct cu_line
 {
+	uint pcount;
 	std::vector<cu_cell> cells;
+	std::string utf8;
+
+	bool ispacked();
+	void pack();
+	void unpack();
+	void clear();
 };
 
 enum cu_char

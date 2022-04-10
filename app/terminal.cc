@@ -166,6 +166,91 @@ static void cuterm_send(cu_term *t, uint c)
     cuterm_write(t, &b, 1);
 }
 
+/*
+ * - unpacked lines: cells vector has one element for every character and
+ *   each cell has a utf32 codepoint. style flags, foreground and background
+ *   colors. the cell count for the line is in cells.size().
+ * - packed lines: cells vector holds style changes. the codepoint element
+ *   contains an offset into utf8_data and the cell count is in pcount.
+ */
+
+bool cu_line::ispacked() { return pcount > 0; }
+
+void cu_line::pack()
+{
+    if (pcount > 0) return;
+
+    std::vector<cu_cell> &ucells = cells;
+    std::vector<cu_cell> pcells;
+
+    utf8.clear();
+
+    cu_cell t = { (uint)-1 };
+    for (size_t i = 0; i < ucells.size(); i++) {
+        cu_cell s = ucells[i];
+        if (s.flags != t.flags || s.fg_col != t.fg_col || s.bg_col != t.bg_col) {
+            t = cu_cell{(uint)utf8.size(), s.flags, s.fg_col, s.bg_col};
+            pcells.push_back(t);
+        }
+        char u[8];
+        size_t l = utf32_to_utf8(u, sizeof(u), s.codepoint);
+        utf8.append(std::string(u, l));
+    }
+
+    pcount = cells.size();
+    cells = pcells;
+}
+
+void cu_line::unpack()
+{
+    if (pcount == 0) return;
+
+    std::vector<cu_cell> &pcells = cells;
+    std::vector<cu_cell> ucells;
+
+    cu_cell t = { 0 };
+    size_t o = 0, q = 0, l = utf8.size();
+    while (o < l) {
+        if (q < pcells.size() && pcells[q].codepoint == o) {
+            t = pcells[q++];
+        }
+        utf32_code v = utf8_to_utf32_code(&utf8[o]);
+        ucells.push_back(cu_cell{(uint)v.code, t.flags, t.fg_col, t.bg_col});
+        o += v.len;
+    }
+
+    pcount = 0;
+    cells = ucells;
+    utf8.clear();
+}
+
+void cu_line::clear()
+{
+    pcount = 0;
+    cells.clear();
+    utf8.clear();
+}
+
+static void cuterm_set_row(cu_term *t, int row)
+{
+    if (row != t->cur_row) {
+        t->lines[t->cur_row].pack();
+        if (row >= t->lines.size()) {
+            t->lines.resize(row + 1);
+        } else {
+            t->lines[row].unpack();
+        }
+        t->cur_row = row;
+    }
+}
+
+static void cuterm_set_col(cu_term *t, int col)
+{
+    if (col != t->cur_col) {
+        t->cur_col = col;
+    }
+}
+
 static void cuterm_resize(cu_term *t)
 {
     /* make sure there as enough lines to encompass the current row */
@@ -174,9 +259,12 @@ static void cuterm_resize(cu_term *t)
     }
 
     /* make we have as many physical lines as there are visible lines */
-    while (t->lines.size() < t->vis_lines) {
-        t->lines.insert(t->lines.begin(),cu_line{});
-        t->cur_row++;
+    if (t->lines.size() < t->vis_lines) {
+        size_t new_rows = t->vis_lines - t->lines.size();
+        for (size_t i = 0; i < new_rows; i++) {
+            t->lines.insert(t->lines.begin(),cu_line{});
+        }
+        cuterm_set_row(t, t->cur_row + new_rows);
     }
 }
 
@@ -184,12 +272,13 @@ void cuterm_move_abs(cu_term *t, int row, int col)
 {
     if (row != -1) {
         cuterm_resize(t);
-        size_t new_row = t->lines.size() - t->vis_lines + row - 1;
-        t->cur_row = std::max(size_t(0), std::min(t->lines.size() - 1, new_row));
+        size_t new_row = std::max(size_t(0), std::min(t->lines.size() - 1,
+                                  t->lines.size() - t->vis_lines + row - 1));
+        cuterm_set_row(t, new_row);
     }
 
     if (col != -1) {
-        t->cur_col = std::max(0, col - 1);
+        cuterm_set_col(t, std::max(0, col - 1));
     }
 }
 
@@ -205,8 +294,8 @@ void cuterm_move_rel(cu_term *t, int row, int col)
         t->lines.resize(new_row + 1);
     }
 
-    t->cur_row = new_row;
-    t->cur_col = new_col;
+    cuterm_set_row(t, new_row);
+    cuterm_set_col(t, new_col);
 }
 
 static void cuterm_erase_screen(cu_term *t, uint arg)
@@ -218,19 +307,19 @@ static void cuterm_erase_screen(cu_term *t, uint arg)
     switch (arg) {
     case cuterm_clear_end:
         for (size_t row = t->cur_row; row < t->lines.size(); row++) {
-            t->lines[row].cells.clear();
+            t->lines[row].clear();
         }
         // move where?
         break;
     case cuterm_clear_start:
         for (size_t row = t->cur_row + 1; row < t->lines.size(); row++) {
-            t->lines[row].cells.clear();
+            t->lines[row].clear();
         }
         // move where?
         break;
     case cuterm_clear_all:
         for (size_t row = 0; row < t->lines.size(); row++) {
-            t->lines[row].cells.clear();
+            t->lines[row].clear();
         }
         // move 0,0 ?
         break;
@@ -284,11 +373,7 @@ static void cuterm_HT(cu_term *t)
 static void cuterm_LF(cu_term *t)
 {
     Trace("cuterm_LF\n");
-    t->cur_row++;
-    if (t->cur_row >= t->lines.size()) {
-        t->lines.resize(t->cur_row + 1);
-    }
-    //t->cur_col = 0;
+    cuterm_set_row(t, t->cur_row + 1);
 }
 
 static void cuterm_CR(cu_term *t)
@@ -300,12 +385,11 @@ static void cuterm_CR(cu_term *t)
 static void cuterm_bare(cu_term *t, uint c)
 {
     Trace("cuterm_bare: %s\n", char_str(c).c_str());
-    cu_cell cell = t->tmpl;
-    cell.codepoint = c;
     if (t->cur_col >= t->lines[t->cur_row].cells.size()) {
         t->lines[t->cur_row].cells.resize(t->cur_col + 1);
     }
-    t->lines[t->cur_row].cells[t->cur_col++] = cell;
+    t->lines[t->cur_row].cells[t->cur_col++] =
+        cu_cell{c, t->tmpl.flags, t->tmpl.fg_col, t->tmpl.bg_col};
 }
 
 static void cuterm_ctrl(cu_term *t, uint c)
