@@ -11,39 +11,38 @@ static int io_buffer_min = 1024;
 static int io_poll_timeout = 1;
 
 static const char* ctrl_code[128] = {
-    [0x00] = "NUL",
-    [0x01] = "SOH", // ^A - Start Of Heading
-    [0x02] = "STX", // ^B - Start Of Text
-    [0x03] = "ETX", // ^C - End Of Text
-    [0x04] = "EOT", // ^D - End Of Transmission
-    [0x05] = "ENQ", // ^E - Enquiry
-    [0x06] = "ACK", // ^F - Acknowledge
-    [0x07] = "BEL", // ^G - Bell
-    [0x08] = "BS",  // ^H - Backspace
-    [0x09] = "HT",  // ^I - Horizontal Tab
-    [0x0A] = "LF",  // ^J - Line Feed
-    [0x0B] = "VT",  // ^K - Vertical Tab
-    [0x0C] = "FF",  // ^L - Form Feed
-    [0x0D] = "CR",  // ^M - Carriage Return
-    [0x0E] = "SO",  // ^N - Shift Out
-    [0x0F] = "SI",  // ^O - Shift In
-    [0x10] = "DLE", // ^P - Data Link Escape
-    [0x11] = "DC1", // ^Q - Device Control 1
-    [0x12] = "DC2", // ^R - Device Control 2
-    [0x13] = "DC3", // ^S - Device Control 3
-    [0x14] = "DC4", // ^T - Device Control 4
-    [0x15] = "NAK", // ^U - Negative Acknowledge
-    [0x16] = "SYN", // ^V - Synchronize Idle
-    [0x17] = "ETB", // ^W - End Of Transmission Block
-    [0x18] = "CAN", // ^X - Cancel
-    [0x19] = "EM",  // ^Y - End of Medium
-    [0x1A] = "SUB", // ^Z - Substitute
-    [0x1B] = "ESC", // ^[ - Escape
-    [0x1C] = "FS",  // ^\ - File Separator
-    [0x1D] = "GS",  // ^] - Group Separator
-    [0x1E] = "RS",  // ^^ - Record Separator
-    [0x1F] = "US",  // ^_ - Unit Separator
-    [0x7F] = "DEL"  // DEL - Delete
+    "NUL",
+    "SOH", // ^A - Start Of Heading
+    "STX", // ^B - Start Of Text
+    "ETX", // ^C - End Of Text
+    "EOT", // ^D - End Of Transmission
+    "ENQ", // ^E - Enquiry
+    "ACK", // ^F - Acknowledge
+    "BEL", // ^G - Bell
+    "BS",  // ^H - Backspace
+    "HT",  // ^I - Horizontal Tab
+    "LF",  // ^J - Line Feed
+    "VT",  // ^K - Vertical Tab
+    "FF",  // ^L - Form Feed
+    "CR",  // ^M - Carriage Return
+    "SO",  // ^N - Shift Out
+    "SI",  // ^O - Shift In
+    "DLE", // ^P - Data Link Escape
+    "DC1", // ^Q - Device Control 1
+    "DC2", // ^R - Device Control 2
+    "DC3", // ^S - Device Control 3
+    "DC4", // ^T - Device Control 4
+    "NAK", // ^U - Negative Acknowledge
+    "SYN", // ^V - Synchronize Idle
+    "ETB", // ^W - End Of Transmission Block
+    "CAN", // ^X - Cancel
+    "EM",  // ^Y - End of Medium
+    "SUB", // ^Z - Substitute
+    "ESC", // ^[ - Escape
+    "FS",  // ^\ - File Separator
+    "GS",  // ^] - Group Separator
+    "RS",  // ^^ - Record Separator
+    "US",  // ^_ - Unit Separator
 };
 
 void cuterm_init(cu_term *t)
@@ -130,8 +129,11 @@ int cuterm_fork(cu_term *t, uint cols, uint rows)
 static std::string char_str(uint c)
 {
     char buf[32];
-    if (c < 32 || c == 0x7f) {
+    if (c < 32) {
         snprintf(buf, sizeof(buf), "%s (0x%02x)", ctrl_code[c], c);
+    }
+    else if (c == 0x7f) {
+        snprintf(buf, sizeof(buf), "DEL (0x%02x)", c);
     }
     else if (c < 0x7f) {
         snprintf(buf, sizeof(buf), "'%c' (0x%02x)", c, c);
