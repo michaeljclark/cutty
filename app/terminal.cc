@@ -59,9 +59,6 @@ void cuterm_init(cu_term *t)
     t->out_start = 0;
     t->out_end = 0;
 
-    t->tmpl.fg_col = cu_cell_color_black;
-    t->tmpl.bg_col = cu_cell_color_white;
-
     t->lines.push_back(cu_line{});
     t->cur_row = 0;
     t->cur_col = 0;
@@ -274,7 +271,7 @@ static void cuterm_resize(cu_term *t)
     }
 }
 
-void cuterm_move_abs(cu_term *t, int row, int col)
+static void cuterm_move_abs(cu_term *t, int row, int col)
 {
     if (row != -1) {
         cuterm_resize(t);
@@ -288,7 +285,7 @@ void cuterm_move_abs(cu_term *t, int row, int col)
     }
 }
 
-void cuterm_move_rel(cu_term *t, int row, int col)
+static void cuterm_move_rel(cu_term *t, int row, int col)
 {
     int new_row = t->cur_row + row;
     int new_col = t->cur_col + col;
@@ -302,6 +299,19 @@ void cuterm_move_rel(cu_term *t, int row, int col)
 
     cuterm_set_row(t, new_row);
     cuterm_set_col(t, new_col);
+}
+
+static void cuterm_reset_style(cu_term *t)
+{
+    t->tmpl.flags = 0;
+    t->tmpl.fg_col = cu_cell_color_fg_dfl;
+    t->tmpl.bg_col = cu_cell_color_bg_dfl;
+}
+
+void cuterm_reset(cu_term *t)
+{
+    cuterm_move_abs(t, 1, 1);
+    cuterm_reset_style(t);
 }
 
 static void cuterm_erase_screen(cu_term *t, uint arg)
@@ -540,20 +550,11 @@ static void cuterm_csi(cu_term *t, uint c)
         }
         break;
     case 'm': /* color and formatting */
-        if (t->argc == 0) { /* reset formatting */
-            t->tmpl.flags = 0;
-            t->tmpl.fg_col = cu_cell_color_black;
-            t->tmpl.bg_col = cu_cell_color_white;
-            break;
-        }
+        if (t->argc == 0) { cuterm_reset_style(t); break; }
         for (size_t i = 0; i < t->argc; i++) {
             uint code = t->argv[i];
             switch (code) {
-            case 0: /* reset formatting */
-                t->tmpl.flags = 0;
-                t->tmpl.fg_col = cu_cell_color_black;
-                t->tmpl.bg_col = cu_cell_color_white;
-                break;
+            case 0: cuterm_reset_style(t); break;
             case 1: t->tmpl.flags |= cu_cell_bold; break;
             case 2: t->tmpl.flags |= cu_cell_faint; break;
             case 3: t->tmpl.flags |= cu_cell_italic; break;
@@ -572,14 +573,38 @@ static void cuterm_csi(cu_term *t, uint c)
             case 27: t->tmpl.flags &= ~cu_cell_inverse; break;
             case 28: t->tmpl.flags &= ~cu_cell_hidden; break;
             case 29: t->tmpl.flags &= ~cu_cell_strikethrough; break;
-            case 30: t->tmpl.fg_col = cu_cell_color_black; break;
-            case 31: t->tmpl.fg_col = cu_cell_color_red; break;
-            case 32: t->tmpl.fg_col = cu_cell_color_green; break;
-            case 33: t->tmpl.fg_col = cu_cell_color_yellow; break;
-            case 34: t->tmpl.fg_col = cu_cell_color_blue; break;
-            case 35: t->tmpl.fg_col = cu_cell_color_magenta; break;
-            case 36: t->tmpl.fg_col = cu_cell_color_cyan; break;
-            case 37: t->tmpl.fg_col = cu_cell_color_white; break;
+            case 30: t->tmpl.fg_col = cu_cell_color_nr_black; break;
+            case 31: t->tmpl.fg_col = cu_cell_color_nr_red; break;
+            case 32: t->tmpl.fg_col = cu_cell_color_nr_green; break;
+            case 33: t->tmpl.fg_col = cu_cell_color_nr_yellow; break;
+            case 34: t->tmpl.fg_col = cu_cell_color_nr_blue; break;
+            case 35: t->tmpl.fg_col = cu_cell_color_nr_magenta; break;
+            case 36: t->tmpl.fg_col = cu_cell_color_nr_cyan; break;
+            case 37: t->tmpl.fg_col = cu_cell_color_nr_white; break;
+            case 40: t->tmpl.bg_col = cu_cell_color_nr_black; break;
+            case 41: t->tmpl.bg_col = cu_cell_color_nr_red; break;
+            case 42: t->tmpl.bg_col = cu_cell_color_nr_green; break;
+            case 43: t->tmpl.bg_col = cu_cell_color_nr_yellow; break;
+            case 44: t->tmpl.bg_col = cu_cell_color_nr_blue; break;
+            case 45: t->tmpl.bg_col = cu_cell_color_nr_magenta; break;
+            case 46: t->tmpl.bg_col = cu_cell_color_nr_cyan; break;
+            case 47: t->tmpl.bg_col = cu_cell_color_nr_white; break;
+            case 90: t->tmpl.fg_col = cu_cell_color_br_black; break;
+            case 91: t->tmpl.fg_col = cu_cell_color_br_red; break;
+            case 92: t->tmpl.fg_col = cu_cell_color_br_green; break;
+            case 93: t->tmpl.fg_col = cu_cell_color_br_yellow; break;
+            case 94: t->tmpl.fg_col = cu_cell_color_br_blue; break;
+            case 95: t->tmpl.fg_col = cu_cell_color_br_magenta; break;
+            case 96: t->tmpl.fg_col = cu_cell_color_br_cyan; break;
+            case 97: t->tmpl.fg_col = cu_cell_color_br_white; break;
+            case 100: t->tmpl.bg_col = cu_cell_color_br_black; break;
+            case 101: t->tmpl.bg_col = cu_cell_color_br_red; break;
+            case 102: t->tmpl.bg_col = cu_cell_color_br_green; break;
+            case 103: t->tmpl.bg_col = cu_cell_color_br_yellow; break;
+            case 104: t->tmpl.bg_col = cu_cell_color_br_blue; break;
+            case 105: t->tmpl.bg_col = cu_cell_color_br_magenta; break;
+            case 106: t->tmpl.bg_col = cu_cell_color_br_cyan; break;
+            case 107: t->tmpl.bg_col = cu_cell_color_br_white; break;
                 break;
             default:
                 break;

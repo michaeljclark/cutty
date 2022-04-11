@@ -20,6 +20,7 @@ public:
 
     color saturate(float f) const;
     color brighten(float f) const;
+    color blend(color o, float f) const;
 
     bool operator==(const color &o);
     bool operator!=(const color &o);
@@ -28,10 +29,10 @@ public:
 inline color::color() : r(0), g(0), b(0), a(0) {}
 
 inline color::color(unsigned rgba) :
-	r(((rgba >> 24) & 0x0ff) / 256.0f),
-	g(((rgba >> 16) & 0xff) / 256.0f),
-	b(((rgba >> 8) & 0xff) / 256.0f),
-	a((rgba & 0xff) / 256.0f) {}
+	a(((rgba >> 24) & 0x0ff) / 256.0f),
+	b(((rgba >> 16) & 0xff) / 256.0f),
+	g(((rgba >> 8) & 0xff) / 256.0f),
+	r((rgba & 0xff) / 256.0f) {}
 
 inline color::color(float r, float g, float b, float a) :
 	r(r), g(g), b(b), a(a) {}
@@ -104,6 +105,15 @@ inline color color::brighten(float f) const
     return color(r * f > 1.0f ? 1.0f : r * f,
                  g * f > 1.0f ? 1.0f : g * f,
                  b * f > 1.0f ? 1.0f : b * f, a);
+}
+
+inline color color::blend(color o, float f) const
+{
+    f = std::max(0.f,std::min(f,1.f));
+    return color(r * f + o.r * (1.f - f),
+                 g * f + o.g * (1.f - f),
+                 b * f + o.b * (1.f - f),
+                 a);
 }
 
 inline bool color::operator==(const color &o)

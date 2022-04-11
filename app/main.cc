@@ -46,7 +46,7 @@ static std::unique_ptr<cu_term> term;
 
 static circular_buffer frame_times;
 static texture_buffer shape_tb, edge_tb, brush_tb;
-static program prog_simple, prog_msdf, prog_canvas;
+static program prog_flat, prog_texture, prog_msdf, prog_canvas;
 static GLuint vao, vbo, ibo;
 static std::map<int,GLuint> tex_map;
 static font_manager_ft manager;
@@ -76,6 +76,7 @@ static bool overlay_stats = false;
 static cu_font_metric fm;
 static font_face *mono1_regular, *mono1_semibold;
 static int framebuffer_width, framebuffer_height;
+static uint cursor_color = 0x40000000;
 
 /* canvas state */
 
@@ -146,7 +147,8 @@ void print_font_metrics(font_face *face, cu_font_metric m)
 static program* cmd_shader_gl(int cmd_shader)
 {
     switch (cmd_shader) {
-    case shader_simple:  return &prog_simple;
+    case shader_flat:    return &prog_flat;
+    case shader_texture: return &prog_texture;
     case shader_msdf:    return &prog_msdf;
     case shader_canvas:  return &prog_canvas;
     default: return nullptr;
@@ -219,6 +221,22 @@ static font_face_ft* cell_font(cu_term *term, cu_cell &cell)
     return static_cast<font_face_ft*>(face);
 }
 
+static uint cell_fgcol(cu_term *term, cu_cell &cell)
+{
+    if ((cell.flags & cu_cell_faint) > 0) {
+        color col = color(cell.fg_col);
+        col = col.blend(color(0.5f,0.5f,0.5f,1.f), 0.5f);
+        return col.rgba32();
+    } else {
+        return cell.fg_col;
+    }
+}
+
+static uint cell_bgcol(cu_term *term, cu_cell &cell)
+{
+    return cell.bg_col;
+}
+
 static void calc_visible(cu_term *term)
 {
     term->vis_rows = (int)std::max(0.f, window_height - 25.0f) / fm.leading;
@@ -248,9 +266,9 @@ static cu_dim render_loop(cu_term *term, int rows, int cols,
             linepre_cb(line, k, l, o);
             for (size_t i = o; i < limit; i++) {
                 cu_cell &cell = line.cells[i];
-                cell_cb(cell, k, l, i);
+                cell_cb(cell, k, l, i - o);
             }
-            linepost_cb(line, k, l, o);
+            linepost_cb(line, k, l, limit - o);
             l++;
         }
     }
@@ -264,80 +282,93 @@ static void render_terminal(cu_term *term, draw_list &batch)
 
     int rows = (int)std::max(0.f, window_height - 25.0f) / fm.leading;
     int cols = (int)std::max(0.f, window_width  - 25.0f) / fm.advance;
-    int clrow = term->cur_row, cvrow = -1;
-    int clcol = term->cur_col, cvcol = -1;
-
+    int font_size = (int)(fm.size * 64.0f);
+    int advance_x = (int)(fm.advance * 64.0f);
+    float glyph_height = fm.height - fm.descender;
+    float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
+    int clrow = term->cur_row, clcol = term->cur_col;
     float ox = 15.0f, oy = window_height - 15.0f;
+    size_t lo;
+    uint bg, lbg;
+    font_face_ft *face, *lface = nullptr;
 
-    /* render cursor */
-
-    auto render_cursor = [&](int row, int col) {
-        uint c = 0x40000000; /* fixme */
+    auto render_block = [&](int row, int col, int h, int w, uint c) {
         float u1 = 0.f, v1 = 0.f, u2 = 0.f, v2 = 0.f;
-        float x2 = ox + col * fm.advance, x1 = x2 + fm.advance;
-        float y1 = oy - row * fm.leading, y2 = y1 - fm.leading;
+        float x2 = ox + col * fm.advance, x1 = x2 + (fm.advance * w);
+        float y1 = oy - row * fm.leading, y2 = y1 - (fm.leading * h);
         uint o0 = draw_list_vertex(batch, {{x1, y1, 0}, {u1, v1}, c});
         uint o1 = draw_list_vertex(batch, {{x2, y1, 0}, {u2, v1}, c});
         uint o2 = draw_list_vertex(batch, {{x2, y2, 0}, {u2, v2}, c});
         uint o3 = draw_list_vertex(batch, {{x1, y2, 0}, {u1, v2}, c});
         draw_list_indices(batch, image_none, mode_triangles,
-            shader_simple, {o0, o3, o1, o1, o3, o2});
+            shader_flat, {o0, o3, o1, o1, o3, o2});
     };
-
-    cu_dim rmd = render_loop(term, rows, cols,
-        [&] (auto line, auto k, auto l, auto o) {
-            if (clrow == k && clcol >= o && clcol < o + cols)
-            {
-                cvrow = l;
-                cvcol = term->cur_col - o;
-            }
-        },
-        [&] (auto cell, auto k, auto l, auto i) {},
-        [&] (auto line, auto k, auto l, auto o) {}
-    );
-
-    if (cvrow >= 0 && cvcol >= 0) {
-        render_cursor(cvrow, cvcol);
-    }
-
-    /* render text */
-
-    int font_size = (int)(fm.size * 64.0f);
-    int advance_x = (int)(fm.advance * 64.0f);
-    float glyph_height = fm.height - fm.descender;
-    float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
-    float x = ox, lx = ox, y = oy;
-    font_face_ft *face, *lface = nullptr;
 
     auto render_text = [&](float x, float y, font_face_ft *face) {
         text_segment segment("", text_lang, face, font_size, x, y-y_offset, 0);
         renderer.render(batch, shapes, segment);
         shapes.clear();
     };
+
+    /* render background colors */
+
     render_loop(term, rows, cols,
         [&] (auto line, auto k, auto l, auto o) {
-            x = lx = ox;
+            lo = 0;
+            bg = lbg = 0;
+        },
+        [&] (auto cell, auto k, auto l, auto o) {
+            bg = cell_bgcol(term, cell);
+            if (o-lo > 0 && bg != lbg) {
+                render_block(l, lo, 1, o-lo, lbg);
+                lo = o;
+            }
+            lbg = bg;
+        },
+        [&] (auto line, auto k, auto l, auto o) {
+            if (o-lo > 0) {
+                render_block(l, lo, 1, o-lo, lbg);
+            }
+        }
+    );
+
+    /* render text */
+
+    render_loop(term, rows, cols,
+        [&] (auto line, auto k, auto l, auto o) {
+            lo = 0;
             face = lface = nullptr;
         },
-        [&] (auto cell, auto k, auto l, auto i) {
+        [&] (auto cell, auto k, auto l, auto o) {
             face = cell_font(term, cell);
-            if (face != lface && lface != nullptr) {
-                render_text(lx, y, lface);
-                lx = x;
+            if (o-lo > 0 && face != lface) {
+                render_text(ox + lo * fm.advance, oy - l * fm.leading, lface);
+                lo = o;
             }
             lface = face;
             uint glyph = FT_Get_Char_Index(face->ftface, cell.codepoint);
             shapes.push_back({
-                glyph, (unsigned)i, 0, 0, advance_x, 0, cell.fg_col
+                glyph, (unsigned)o, 0, 0, advance_x, 0, cell_fgcol(term, cell)
             });
-            x += fm.advance;
         },
         [&] (auto line, auto k, auto l, auto o) {
-            if (face != nullptr) {
-                render_text(lx, y, face);
+            if (o-lo > 0) {
+                render_text(ox + lo * fm.advance, oy - l * fm.leading, lface);
             }
-            y -= fm.leading;
         }
+    );
+
+    /* render cursor */
+
+    cu_dim rmd = render_loop(term, rows, cols,
+        [&] (auto line, auto k, auto l, auto o) {
+            if (clrow == k && clcol >= o && clcol < o + cols)
+            {
+                render_block(l, term->cur_col - o, 1, 1, cursor_color);
+            }
+        },
+        [&] (auto cell, auto k, auto l, auto o) {},
+        [&] (auto line, auto k, auto l, auto o) {}
     );
 
     term->vis_rows = rmd.vis_rows;
@@ -458,8 +489,11 @@ static void reshape()
     glUseProgram(prog_msdf.pid);
     update_uniforms(&prog_msdf);
 
-    glUseProgram(prog_simple.pid);
-    update_uniforms(&prog_simple);
+    glUseProgram(prog_flat.pid);
+    update_uniforms(&prog_flat);
+
+    glUseProgram(prog_texture.pid);
+    update_uniforms(&prog_texture);
 }
 
 /* keyboard callback */
@@ -521,7 +555,7 @@ static void cursor_position(GLFWwindow* window, double xpos, double ypos)
 
 static void initialize()
 {
-    GLuint simple_fsh, msdf_fsh, canvas_fsh, vsh;
+    GLuint flat_fsh, texture_fsh, msdf_fsh, canvas_fsh, vsh;
 
     std::vector<std::string> attrs = {
         "a_pos", "a_uv0", "a_color", "a_shape", "a_gamma"
@@ -529,14 +563,16 @@ static void initialize()
 
     /* shader program */
     vsh = compile_shader(GL_VERTEX_SHADER, "shaders/simple.vsh");
-    simple_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/simple.fsh");
+    flat_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/flat.fsh");
+    texture_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/texture.fsh");
     msdf_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/msdf.fsh");
     canvas_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/canvas.fsh");
-    link_program(&prog_simple, vsh, simple_fsh, attrs);
+    link_program(&prog_flat, vsh, flat_fsh, attrs);
+    link_program(&prog_texture, vsh, texture_fsh, attrs);
     link_program(&prog_msdf, vsh, msdf_fsh, attrs);
     link_program(&prog_canvas, vsh, canvas_fsh, attrs);
     glDeleteShader(vsh);
-    glDeleteShader(simple_fsh);
+    glDeleteShader(texture_fsh);
     glDeleteShader(msdf_fsh);
     glDeleteShader(canvas_fsh);
 
@@ -639,7 +675,7 @@ static void cuterm_main(int argc, char **argv)
     reshape();
 
     calc_visible(term.get());
-    cuterm_move_abs(term.get(), 1, 1);
+    cuterm_reset(term.get());
 
     if (cuterm_fork(term.get(), term->vis_cols, term->vis_rows) < 0) {
         Panic("cuterm_fork: failed");

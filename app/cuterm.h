@@ -48,14 +48,26 @@ enum cu_cell_flag
 
 enum cu_cell_color
 {
-	cu_cell_color_black   = 0xff000000,
-	cu_cell_color_red     = 0xff000099,
-	cu_cell_color_green   = 0xff009900,
-	cu_cell_color_yellow  = 0xffdddd00,
-	cu_cell_color_blue    = 0xff990000,
-	cu_cell_color_magenta = 0xffdd00dd,
-	cu_cell_color_cyan    = 0xff00dddd,
-	cu_cell_color_white   = 0xffdddddd,
+	cu_cell_color_fg_dfl     = 0xff000000,
+	cu_cell_color_bg_dfl     = 0xffffffff,
+
+	cu_cell_color_nr_black   = 0xff000000,
+	cu_cell_color_nr_red     = 0xff000099,
+	cu_cell_color_nr_green   = 0xff009900,
+	cu_cell_color_nr_yellow  = 0xff00cccc,
+	cu_cell_color_nr_blue    = 0xff990000,
+	cu_cell_color_nr_magenta = 0xffcc00cc,
+	cu_cell_color_nr_cyan    = 0xffcccc00,
+	cu_cell_color_nr_white   = 0xffcccccc,
+
+	cu_cell_color_br_black   = 0xff000000,
+	cu_cell_color_br_red     = 0xff0000bb,
+	cu_cell_color_br_green   = 0xff00bb00,
+	cu_cell_color_br_yellow  = 0xff00eeee,
+	cu_cell_color_br_blue    = 0xffbb0000,
+	cu_cell_color_br_magenta = 0xffee00ee,
+	cu_cell_color_br_cyan    = 0xffeeee00,
+	cu_cell_color_br_white   = 0xffeeeeee,
 };
 
 enum cu_charset
@@ -210,8 +222,7 @@ struct cu_term
 void cuterm_init(cu_term *term);
 void cuterm_close(cu_term *term);
 int cuterm_fork(cu_term *term, uint cols, uint rows);
-void cuterm_move_abs(cu_term *term, int row, int col);
-void cuterm_move_rel(cu_term *term, int row, int col);
+void cuterm_reset(cu_term *term);
 ssize_t cuterm_io(cu_term *term);
 ssize_t cuterm_process(cu_term *term);
 ssize_t cuterm_write(cu_term *term, const char *buf, size_t len);

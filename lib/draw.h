@@ -33,14 +33,15 @@ enum {
 };
 
 enum {
-    mode_triangles = 1,
-    mode_lines     = 2,
+    mode_triangles  = 1,
+    mode_lines      = 2,
 };
 
 enum {
-    shader_simple   = 1,
-    shader_msdf     = 2,
-    shader_canvas   = 3,
+    shader_flat     = 1,
+    shader_texture  = 2,
+    shader_msdf     = 3,
+    shader_canvas   = 4,
 };
 
 typedef struct {

@@ -138,6 +138,15 @@ set(GLAD_LIBRARIES ${GLAD_LIBRARIES} PARENT_SCOPE)
 set(GLYB_LIBS ${GLYB_LIBS} PARENT_SCOPE)
 
 #
+# Test programs
+#
+
+foreach(test IN ITEMS t1)
+  add_executable(${test} tests/${test}.cc)
+  target_link_libraries(${test} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
+endforeach(test)
+
+#
 # CLI programs
 #
 

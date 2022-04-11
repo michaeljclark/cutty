@@ -766,7 +766,7 @@ void text_renderer_ft::render(draw_list &batch,
             uint o2 = draw_list_vertex(batch, {{x2, y2, 0}, {u2, v2}, c});
             uint o3 = draw_list_vertex(batch, {{x1, y2, 0}, {u1, v2}, c});
             draw_list_indices(batch, ge->atlas->get_image()->iid, mode_triangles,
-                ge->atlas->depth == 4 ? shader_msdf : shader_simple,
+                ge->atlas->depth == 4 ? shader_msdf : shader_texture,
                 {o0, o3, o1, o1, o3, o2});
             draw_list_image_delta(batch, ge->atlas->get_image(), ge->atlas->get_delta(),
                 st_clamp | atlas_image_filter(ge->atlas));
