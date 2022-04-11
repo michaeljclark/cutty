@@ -201,6 +201,8 @@ void cu_line::pack()
 
     pcount = cells.size();
     cells = pcells;
+    cells.shrink_to_fit();
+    utf8.shrink_to_fit();
 }
 
 void cu_line::unpack()
@@ -231,6 +233,8 @@ void cu_line::clear()
     pcount = 0;
     cells.clear();
     utf8.clear();
+    cells.shrink_to_fit();
+    utf8.shrink_to_fit();
 }
 
 static void cuterm_set_row(cu_term *t, int row)
