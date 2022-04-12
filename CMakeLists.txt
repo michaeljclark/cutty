@@ -141,7 +141,7 @@ set(GLYB_LIBS ${GLYB_LIBS} PARENT_SCOPE)
 # Test programs
 #
 
-foreach(test IN ITEMS t1)
+foreach(test IN ITEMS t0 t1 t2 t3 t4 t5 t6 t7 t8)
   add_executable(${test} tests/${test}.cc)
   target_link_libraries(${test} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
 endforeach(test)
@@ -166,7 +166,7 @@ if (have_forkpty_libutil_h OR have_forkpty_pty_h)
   list(APPEND UTIL_LIBS util)
 endif()
 
-add_executable(cuterm app/main.cc app/terminal.cc)
+add_executable(cuterm app/main.cc app/terminal.cc app/colors.cc)
 target_link_libraries(cuterm ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
 target_compile_definitions(cuterm PRIVATE -DHAVE_GLAD)
 if(WIN32)

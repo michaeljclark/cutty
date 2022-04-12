@@ -36,16 +36,17 @@ struct circular_buffer
 
 enum cu_cell_flag
 {
-	cu_cell_bold            = 1 << 0,
-	cu_cell_faint           = 1 << 1,
-	cu_cell_italic          = 1 << 2,
-	cu_cell_underline       = 1 << 3,
-	cu_cell_doubleunderline = 1 << 4,
-	cu_cell_blink           = 1 << 5,
-	cu_cell_inverse         = 1 << 6,
-	cu_cell_hidden          = 1 << 7,
-	cu_cell_strikethrough   = 1 << 8,
-	cu_cell_fraktur         = 1 << 9,
+	cu_cell_bold             = 1 << 0,
+	cu_cell_faint            = 1 << 1,
+	cu_cell_italic           = 1 << 2,
+	cu_cell_underline        = 1 << 3,
+	cu_cell_dunderline       = 1 << 4,
+	cu_cell_blink            = 1 << 5,
+	cu_cell_rblink           = 1 << 6,
+	cu_cell_inverse          = 1 << 7,
+	cu_cell_hidden           = 1 << 8,
+	cu_cell_strikeout        = 1 << 9,
+	cu_cell_fraktur          = 1 << 10,
 };
 
 enum cu_cell_color
@@ -82,8 +83,8 @@ struct cu_cell
 {
 	uint codepoint;
 	uint flags;
-	uint fg_col;
-	uint bg_col;
+	uint fg;
+	uint bg;
 };
 
 enum cu_line_flag
@@ -153,20 +154,27 @@ enum cu_state
 	cu_state_utf4,
 	cu_state_utf3,
 	cu_state_utf2,
-	cu_state_csi_init,
+	cu_state_csi0,
 	cu_state_csi,
 	cu_state_csi_dec,
 	cu_state_csi_dec2,
 	cu_state_csi_dec3,
-	cu_state_osc_init,
+	cu_state_osc0,
 	cu_state_osc,
 	cu_state_osc_string,
 	cu_state_charset,
 };
 
-enum cu_term_flag
+enum cu_flag
 {
-	cu_term_wrap            = 1 << 1,
+	cu_flag_DECCKM          = 1 << 0,
+	cu_flag_DECAWM          = 1 << 1,
+	cu_flag_DECTCEM         = 1 << 2
+};
+
+enum cu_term_col
+{
+	cu_term_col_home = 0xffff0000
 };
 
 struct cu_font_metric
@@ -219,7 +227,11 @@ struct cu_term
 	uint vis_rows;
 	uint vis_cols;
 	uint vis_lines;
+	uint top_marg;
+	uint bot_marg;
 };
+
+extern uint cuterm_colors_256[256];
 
 void cuterm_init(cu_term *term);
 void cuterm_close(cu_term *term);

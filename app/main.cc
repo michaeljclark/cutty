@@ -62,7 +62,7 @@ static const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
 #if defined __APPLE__
 static const float stats_font_size = 12.5f;
 static const float terminal_font_size = 12.5f;
-static int window_width = 640, window_height = 420;
+static int window_width = 640, window_height = 440;
 #else
 static const float stats_font_size = 25.0f;
 static const float terminal_font_size = 25.0f;
@@ -221,20 +221,22 @@ static font_face_ft* cell_font(cu_term *term, cu_cell &cell)
     return static_cast<font_face_ft*>(face);
 }
 
-static uint cell_fgcol(cu_term *term, cu_cell &cell)
+static cu_cell cell_col(cu_term *term, cu_cell &cell)
 {
-    if ((cell.flags & cu_cell_faint) > 0) {
-        color col = color(cell.fg_col);
-        col = col.blend(color(0.5f,0.5f,0.5f,1.f), 0.5f);
-        return col.rgba32();
-    } else {
-        return cell.fg_col;
-    }
-}
+    uint fg = cell.fg;
+    uint bg = cell.bg;
 
-static uint cell_bgcol(cu_term *term, cu_cell &cell)
-{
-    return cell.bg_col;
+    if ((cell.flags & cu_cell_faint) > 0) {
+        color col = color(cell.fg);
+        col = col.blend(color(0.5f,0.5f,0.5f,1.f), 0.5f);
+        fg = col.rgba32();
+    }
+
+    if ((cell.flags & cu_cell_inverse) > 0) {
+        return cu_cell{ 0, 0, bg, fg };
+    } else {
+        return cu_cell{ 0, 0, fg, bg };
+    }
 }
 
 static void calc_visible(cu_term *term)
@@ -250,7 +252,7 @@ static cu_dim render_loop(cu_term *term, int rows, int cols,
     std::function<void(cu_line &line,size_t k,size_t l,size_t o)> linepost_cb)
 {
     int wrapline_count = 0;
-    bool linewrap = (term->flags & cu_term_wrap) > 0;
+    bool linewrap = (term->flags & cu_flag_DECAWM) > 0;
     size_t linecount = term->lines.size();
     for (size_t k = linecount - 1, l = 0; k < linecount && l < rows; k--) {
         font_face_ft *face, *lface = nullptr;
@@ -312,13 +314,13 @@ static void render_terminal(cu_term *term, draw_list &batch)
 
     /* render background colors */
 
-    render_loop(term, rows, cols,
+    cu_dim rmd = render_loop(term, rows, cols,
         [&] (auto line, auto k, auto l, auto o) {
             lo = 0;
             bg = lbg = 0;
         },
         [&] (auto cell, auto k, auto l, auto o) {
-            bg = cell_bgcol(term, cell);
+            bg = cell_col(term, cell).bg;
             if (o-lo > 0 && bg != lbg) {
                 render_block(l, lo, 1, o-lo, lbg);
                 lo = o;
@@ -348,7 +350,7 @@ static void render_terminal(cu_term *term, draw_list &batch)
             lface = face;
             uint glyph = FT_Get_Char_Index(face->ftface, cell.codepoint);
             shapes.push_back({
-                glyph, (unsigned)o, 0, 0, advance_x, 0, cell_fgcol(term, cell)
+                glyph, (unsigned)o, 0, 0, advance_x, 0, cell_col(term, cell).fg
             });
         },
         [&] (auto line, auto k, auto l, auto o) {
@@ -360,16 +362,18 @@ static void render_terminal(cu_term *term, draw_list &batch)
 
     /* render cursor */
 
-    cu_dim rmd = render_loop(term, rows, cols,
-        [&] (auto line, auto k, auto l, auto o) {
-            if (clrow == k && clcol >= o && clcol < o + cols)
-            {
-                render_block(l, term->cur_col - o, 1, 1, cursor_color);
-            }
-        },
-        [&] (auto cell, auto k, auto l, auto o) {},
-        [&] (auto line, auto k, auto l, auto o) {}
-    );
+    if ((term->flags & cu_flag_DECTCEM) > 0) {
+        render_loop(term, rows, cols,
+            [&] (auto line, auto k, auto l, auto o) {
+                if (clrow == k && clcol >= o && clcol < o + cols)
+                {
+                    render_block(l, term->cur_col - o, 1, 1, cursor_color);
+                }
+            },
+            [&] (auto cell, auto k, auto l, auto o) {},
+            [&] (auto line, auto k, auto l, auto o) {}
+        );
+    }
 
     term->vis_rows = rmd.vis_rows;
     term->vis_cols = rmd.vis_cols;

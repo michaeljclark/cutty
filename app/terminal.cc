@@ -10,7 +10,7 @@ static int io_buffer_size = 65536;
 static int io_buffer_min = 1024;
 static int io_poll_timeout = 1;
 
-static const char* ctrl_code[128] = {
+static const char* ctrl_code[32] = {
     "NUL",
     "SOH", // ^A - Start Of Heading
     "STX", // ^B - Start Of Text
@@ -48,7 +48,7 @@ static const char* ctrl_code[128] = {
 void cuterm_init(cu_term *t)
 {
     t->state =  cu_state_normal;
-    t->flags =  cu_term_wrap;
+    t->flags =  cu_flag_DECAWM | cu_flag_DECTCEM;
     t->charset = cu_charset_utf8;
 
     t->in_buf.resize(io_buffer_size);
@@ -187,8 +187,8 @@ void cu_line::pack()
     cu_cell t = { (uint)-1 };
     for (size_t i = 0; i < ucells.size(); i++) {
         cu_cell s = ucells[i];
-        if (s.flags != t.flags || s.fg_col != t.fg_col || s.bg_col != t.bg_col) {
-            t = cu_cell{(uint)utf8.size(), s.flags, s.fg_col, s.bg_col};
+        if (s.flags != t.flags || s.fg != t.fg || s.bg != t.bg) {
+            t = cu_cell{(uint)utf8.size(), s.flags, s.fg, s.bg};
             pcells.push_back(t);
         }
         char u[8];
@@ -216,7 +216,7 @@ void cu_line::unpack()
             t = pcells[q++];
         }
         utf32_code v = utf8_to_utf32_code(&utf8[o]);
-        ucells.push_back(cu_cell{(uint)v.code, t.flags, t.fg_col, t.bg_col});
+        ucells.push_back(cu_cell{(uint)v.code, t.flags, t.fg, t.bg});
         o += v.len;
     }
 
@@ -261,7 +261,7 @@ static void cuterm_resize(cu_term *t)
         t->lines.resize(t->cur_row + 1);
     }
 
-    /* make we have as many physical lines as there are visible lines */
+    /* make sure there are as many physical lines as visible lines */
     if (t->lines.size() < t->vis_lines) {
         size_t new_rows = t->vis_lines - t->lines.size();
         for (size_t i = 0; i < new_rows; i++) {
@@ -298,13 +298,13 @@ void cuterm_winsize(cu_term *t)
 
 static void cuterm_move_abs(cu_term *t, int row, int col)
 {
+    Trace("cuterm_move_abs: %d %d\n", row, col);
     if (row != -1) {
         cuterm_resize(t);
         size_t new_row = std::max(size_t(0), std::min(t->lines.size() - 1,
                                   t->lines.size() - t->vis_lines + row - 1));
         cuterm_set_row(t, new_row);
     }
-
     if (col != -1) {
         cuterm_set_col(t, std::max(0, col - 1));
     }
@@ -312,65 +312,66 @@ static void cuterm_move_abs(cu_term *t, int row, int col)
 
 static void cuterm_move_rel(cu_term *t, int row, int col)
 {
+    Trace("cuterm_move_rel: %d %d\n", row, col);
     int new_row = t->cur_row + row;
-    int new_col = t->cur_col + col;
-
+    int new_col = col == cu_term_col_home ? 0 : t->cur_col + col;
     if (new_row < 0) new_row = 0;
     if (new_col < 0) new_col = 0;
-
     if (new_row >= t->lines.size()) {
         t->lines.resize(new_row + 1);
     }
-
     cuterm_set_row(t, new_row);
     cuterm_set_col(t, new_col);
+}
+
+static void cuterm_scroll_region(cu_term *t, int line0, int line1)
+{
+    Trace("cuterm_scroll_region: %d %d\n", line0, line1);
+    t->top_marg = line0;
+    t->bot_marg = line1;
 }
 
 static void cuterm_reset_style(cu_term *t)
 {
     t->tmpl.flags = 0;
-    t->tmpl.fg_col = cu_cell_color_fg_dfl;
-    t->tmpl.bg_col = cu_cell_color_bg_dfl;
+    t->tmpl.fg = cu_cell_color_fg_dfl;
+    t->tmpl.bg = cu_cell_color_bg_dfl;
 }
 
 void cuterm_reset(cu_term *t)
 {
+    Trace("cuterm_reset\n");
     cuterm_move_abs(t, 1, 1);
     cuterm_reset_style(t);
 }
 
 static void cuterm_erase_screen(cu_term *t, uint arg)
 {
-    Trace("cuterm_erase_screen: arg=%d\n", arg);
-
+    Trace("cuterm_erase_screen: %d\n", arg);
     cuterm_resize(t);
-
     switch (arg) {
     case cuterm_clear_end:
         for (size_t row = t->cur_row; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
-        // move where?
         break;
     case cuterm_clear_start:
         for (size_t row = t->cur_row + 1; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
-        // move where?
         break;
     case cuterm_clear_all:
         for (size_t row = 0; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
-        // move 0,0 ?
+        cuterm_move_abs(t, 1, 1);
         break;
     }
 }
 
 static void cuterm_erase_line(cu_term *t, uint arg)
 {
-    Trace("cuterm_erase_line: arg=%d\n", arg);
-
+    Trace("cuterm_erase_line: %d\n", arg);
     switch (arg) {
     case cuterm_clear_end:
         if (t->cur_col < t->lines[t->cur_row].cells.size()) {
@@ -392,6 +393,56 @@ static void cuterm_erase_line(cu_term *t, uint arg)
     }
 }
 
+static void cuterm_insert_lines(cu_term *t, uint arg)
+{
+    Trace("cuterm_insert_lines: %d\n", arg);
+    if (arg == 0) return;
+    // consider line editing mode: *following*, or preceding
+    // consider bottom margin for following mode. add bounds checks
+    uint top = t->top_marg == 0 ? 1           : t->top_marg;
+    uint bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
+    uint scrolloff = t->bot_marg < t->vis_rows ? t->vis_rows - t->bot_marg : 0;
+    t->lines[t->cur_row].pack();
+    for (int i = 0; i < arg; i++) {
+        t->lines.insert(t->lines.begin() + t->cur_row, cu_line{});
+        t->lines.erase(t->lines.end() - 1 - scrolloff);
+    }
+    t->lines[t->cur_row].unpack();
+    t->cur_col = 0;
+}
+
+static void cuterm_delete_lines(cu_term *t, uint arg)
+{
+    Trace("cuterm_delete_lines: %d\n", arg);
+    if (arg == 0) return;
+    // consider line editing mode: *following*, or preceding
+    // consider bottom margin for following mode. add bounds checks
+    uint top = t->top_marg == 0 ? 1           : t->top_marg;
+    uint bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
+    uint scrolloff = t->bot_marg < t->vis_rows ? t->vis_rows - t->bot_marg : 0;
+    t->lines[t->cur_row].pack();
+    for (int i = 0; i < arg; i++) {
+        if (t->cur_row < t->lines.size()) {
+            t->lines.erase(t->lines.begin() + t->cur_row);
+            t->lines.insert(t->lines.end() - scrolloff, cu_line{});
+        }
+    }
+    t->lines[t->cur_row].unpack();
+    t->cur_col = 0;
+}
+
+static void cuterm_delete_chars(cu_term *t, uint arg)
+{
+    Trace("cuterm_delete_chars: %d\n", arg);
+    for (size_t i = 0; i < arg; i++) {
+        if (t->cur_col < t->lines[t->cur_row].cells.size()) {
+            t->lines[t->cur_row].cells.erase(
+                t->lines[t->cur_row].cells.begin() + t->cur_col
+            );
+        }
+    }
+}
+
 static void cuterm_BEL(cu_term *t)
 {
     Trace("cuterm_BEL: unimplemented\n");
@@ -400,9 +451,7 @@ static void cuterm_BEL(cu_term *t)
 static void cuterm_BS(cu_term *t)
 {
     Trace("cuterm_BS\n");
-    if (t->cur_col > 0) {
-        t->cur_col--;
-    }
+    if (t->cur_col > 0) t->cur_col--;
 }
 
 static void cuterm_HT(cu_term *t)
@@ -430,7 +479,7 @@ static void cuterm_bare(cu_term *t, uint c)
         t->lines[t->cur_row].cells.resize(t->cur_col + 1);
     }
     t->lines[t->cur_row].cells[t->cur_col++] =
-        cu_cell{c, t->tmpl.flags, t->tmpl.fg_col, t->tmpl.bg_col};
+        cu_cell{c, t->tmpl.flags, t->tmpl.fg, t->tmpl.bg};
 }
 
 static void cuterm_ctrl(cu_term *t, uint c)
@@ -448,64 +497,95 @@ static void cuterm_ctrl(cu_term *t, uint c)
     }
 }
 
+static void cuterm_xtwinops(cu_term *t)
+{
+    Debug("cuterm_xtwinops: %s unimplemented\n", esc_args(t).c_str());
+}
+
 static void cuterm_charset(cu_term *t, uint cmd, uint set)
 {
-    Debug("cuterm_charset: %c %c\n", cmd, set);
+    Debug("cuterm_charset: %c %c unimplemented\n", cmd, set);
 }
 
 static void cuterm_osc(cu_term *t, uint c)
 {
-    Debug("cuterm_osc: %s %s\n",
+    Debug("cuterm_osc: %s %s unimplemented\n",
         esc_args(t).c_str(), char_str(c).c_str());
 }
 
 static void cuterm_osc_string(cu_term *t, uint c)
 {
-    Debug("cuterm_osc_string: %s %s \"%s\"\n",
+    Debug("cuterm_osc_string: %s %s \"%s\" unimplemented\n",
         esc_args(t).c_str(), char_str(c).c_str(), t->osc_string.c_str());
+}
+
+struct cuterm_private_mode_rec
+{
+    uint code;
+    uint flag;
+    const char *name;
+    const char *desc;
+};
+
+static cuterm_private_mode_rec dec_flags[] = {
+    {  1, cu_flag_DECCKM,  "DECCKM",  "DEC Cursor Key Mode" },
+    {  7, cu_flag_DECAWM,  "DECAWM",  "DEC Auto Wrap Mode" },
+    { 25, cu_flag_DECTCEM, "DECTCEM", "DEC Text Cursor Enable Mode" },
+};
+
+static cuterm_private_mode_rec* cuterm_lookup_private_mode_rec(uint code)
+{
+    for (size_t i = 0; i < array_size(dec_flags); i++) {
+        if (dec_flags[i].code == code) return dec_flags + i;
+    }
+    return NULL;
+}
+
+static void cuterm_csi_private_mode(cu_term *t, uint code, uint set)
+{
+    cuterm_private_mode_rec *rec = cuterm_lookup_private_mode_rec(code);
+    if (rec == NULL) {
+        Debug("cuterm_csi_private_mode: %s flag %d: unimplemented\n",
+            set ? "set" : "clear", code);
+    } else {
+        Debug("cuterm_csi_private_mode: %s flag %d: %s /* %s */\n",
+            set ? "set" : "clear", code, rec->name, rec->desc);
+        if (set) {
+            t->flags |= rec->flag;
+        } else {
+            t->flags &= ~rec->flag;
+        }
+    }
 }
 
 static void cuterm_csi_dec(cu_term *t, uint c)
 {
-    Trace("cuterm_csi_dec: %s %s\n",
-        char_str(c).c_str(), esc_args(t).c_str());
     switch (c) {
+    case 'l': cuterm_csi_private_mode(t, opt_arg(t, 0, 0), 0); break;
+    case 'h': cuterm_csi_private_mode(t, opt_arg(t, 0, 0), 1); break;
     default:
-    Debug("cuterm_csi_dec: %s %s unimplemented\n",
-        char_str(c).c_str(), esc_args(t).c_str());
+        Debug("cuterm_csi_dec: %s %s unimplemented\n",
+            char_str(c).c_str(), esc_args(t).c_str());
         break;
     }
 }
 
 static void cuterm_csi_dec2(cu_term *t, uint c)
 {
-    Trace("cuterm_csi_dec2: %s %s\n",
-        char_str(c).c_str(), esc_args(t).c_str());
-    switch (c) {
-    default:
     Debug("cuterm_csi_dec2: %s %s unimplemented\n",
         char_str(c).c_str(), esc_args(t).c_str());
-        break;
-    }
 }
 
 static void cuterm_csi_dec3(cu_term *t, uint c)
 {
-    Trace("cuterm_csi_dec3: %s %s\n",
-        char_str(c).c_str(), esc_args(t).c_str());
-    switch (c) {
-    default:
     Debug("cuterm_csi_dec3: %s %s unimplemented\n",
         char_str(c).c_str(), esc_args(t).c_str());
-        break;
-    }
 }
 
 static void cuterm_csi(cu_term *t, uint c)
 {
     Trace("cuterm_csi: %s %s\n",
-        esc_args(t).c_str(),
-        char_str(c).c_str());
+        esc_args(t).c_str(), char_str(c).c_str());
 
     switch (c) {
     case '@': /* insert blanks */
@@ -522,22 +602,22 @@ static void cuterm_csi(cu_term *t, uint c)
         break;
     }
     case 'A': /* move up */
-        cuterm_move_rel(t, -1, 0);
+        cuterm_move_rel(t, -opt_arg(t, 0, 1), 0);
         break;
     case 'B': /* move down */
-        cuterm_move_rel(t, 1,  0);
+        cuterm_move_rel(t, opt_arg(t, 0, 1),  0);
         break;
     case 'C': /* move right */
-        cuterm_move_rel(t, 0,  1);
+        cuterm_move_rel(t, 0,  opt_arg(t, 0, 1));
         break;
     case 'D': /* move left */
-        cuterm_move_rel(t, 0, -1);
+        cuterm_move_rel(t, 0, -opt_arg(t, 0, 1));
         break;
-    case 'E': /* move beginning */
-        Debug("cuterm_csi: CSI E unimplemented");
+    case 'E': /* move next line */
+        cuterm_move_rel(t, opt_arg(t, 0, 1), cu_term_col_home);
         break;
-    case 'F': /* move end */
-        Debug("cuterm_csi: CSI F unimplemented");
+    case 'F': /* move prev line */
+        cuterm_move_rel(t, -opt_arg(t, 0, 1), cu_term_col_home);
         break;
     case 'G': /* move to {col} */
         cuterm_move_abs(t, -1, opt_arg(t, 0, 1));
@@ -545,16 +625,7 @@ static void cuterm_csi(cu_term *t, uint c)
     case 'H': /* move to {line};{col} */
         cuterm_move_abs(t, opt_arg(t, 0, 1), opt_arg(t, 1, 1));
         break;
-    case 'd': /* move to {line};1 absolute */
-        cuterm_move_abs(t, opt_arg(t, 0, 1), 1);
-        break;
-    case 'e': /* move to {line};1 relative */
-        cuterm_move_rel(t, opt_arg(t, 0, 1), 0);
-        break;
-    case 'f': /* move to {line};{col} absolute */
-        cuterm_move_abs(t, opt_arg(t, 0, 1), opt_arg(t, 1, 1));
-        break;
-    case 'J':
+    case 'J': /* erase lines {0=to-end,1=from-start,2=all} */
         switch (opt_arg(t, 0, 0)) {
         case 0: cuterm_erase_screen(t, cuterm_clear_end); break;
         case 1: cuterm_erase_screen(t, cuterm_clear_start); break;
@@ -564,7 +635,7 @@ static void cuterm_csi(cu_term *t, uint c)
             break;
         }
         break;
-    case 'K':
+    case 'K': /* erase chars {0=to-end,1=from-start,2=all} */
         switch (opt_arg(t, 0, 0)) {
         case 0: cuterm_erase_line(t, cuterm_clear_end); break;
         case 1: cuterm_erase_line(t, cuterm_clear_start); break;
@@ -574,8 +645,29 @@ static void cuterm_csi(cu_term *t, uint c)
             break;
         }
         break;
+    case 'L': /* insert lines */
+        cuterm_insert_lines(t, opt_arg(t, 0, 1));
+        break;
+    case 'M': /* delete lines */
+        cuterm_delete_lines(t, opt_arg(t, 0, 1));
+        break;
+    case 'P': /* delete characters */
+        cuterm_delete_chars(t, opt_arg(t, 0, 1));
+        break;
+    case 'd': /* move to {line};1 absolute */
+        cuterm_move_abs(t, opt_arg(t, 0, 1), -1);
+        break;
+    case 'e': /* move to {line};1 relative */
+        cuterm_move_rel(t, opt_arg(t, 0, 1), 0);
+        break;
+    case 'f': /* move to {line};{col} absolute */
+        cuterm_move_abs(t, opt_arg(t, 0, 1), opt_arg(t, 1, 1));
+        break;
     case 'm': /* color and formatting */
-        if (t->argc == 0) { cuterm_reset_style(t); break; }
+        if (t->argc == 0) {
+            cuterm_reset_style(t);
+            break;
+        }
         for (size_t i = 0; i < t->argc; i++) {
             uint code = t->argv[i];
             switch (code) {
@@ -585,56 +677,94 @@ static void cuterm_csi(cu_term *t, uint c)
             case 3: t->tmpl.flags |= cu_cell_italic; break;
             case 4: t->tmpl.flags |= cu_cell_underline; break;
             case 5: t->tmpl.flags |= cu_cell_blink; break;
+            case 6: t->tmpl.flags |= cu_cell_rblink; break;
             case 7: t->tmpl.flags |= cu_cell_inverse; break;
             case 8: t->tmpl.flags |= cu_cell_hidden; break;
-            case 9: t->tmpl.flags |= cu_cell_strikethrough; break;
+            case 9: t->tmpl.flags |= cu_cell_strikeout; break;
             /* case 10 through 19 custom fonts */
             case 20: t->tmpl.flags |= cu_cell_fraktur; break;
-            case 21: t->tmpl.flags |= cu_cell_doubleunderline; break;
+            case 21: t->tmpl.flags |= cu_cell_dunderline; break;
             case 22: t->tmpl.flags &= ~(cu_cell_bold | cu_cell_faint); break;
             case 23: t->tmpl.flags &= ~(cu_cell_italic | cu_cell_fraktur); break;
-            case 24: t->tmpl.flags &= ~(cu_cell_underline | cu_cell_doubleunderline); break;
+            case 24: t->tmpl.flags &= ~(cu_cell_underline | cu_cell_dunderline); break;
             case 25: t->tmpl.flags &= ~cu_cell_blink; break;
+            case 26: t->tmpl.flags &= ~cu_cell_rblink; break;
             case 27: t->tmpl.flags &= ~cu_cell_inverse; break;
             case 28: t->tmpl.flags &= ~cu_cell_hidden; break;
-            case 29: t->tmpl.flags &= ~cu_cell_strikethrough; break;
-            case 30: t->tmpl.fg_col = cu_cell_color_nr_black; break;
-            case 31: t->tmpl.fg_col = cu_cell_color_nr_red; break;
-            case 32: t->tmpl.fg_col = cu_cell_color_nr_green; break;
-            case 33: t->tmpl.fg_col = cu_cell_color_nr_yellow; break;
-            case 34: t->tmpl.fg_col = cu_cell_color_nr_blue; break;
-            case 35: t->tmpl.fg_col = cu_cell_color_nr_magenta; break;
-            case 36: t->tmpl.fg_col = cu_cell_color_nr_cyan; break;
-            case 37: t->tmpl.fg_col = cu_cell_color_nr_white; break;
-            case 40: t->tmpl.bg_col = cu_cell_color_nr_black; break;
-            case 41: t->tmpl.bg_col = cu_cell_color_nr_red; break;
-            case 42: t->tmpl.bg_col = cu_cell_color_nr_green; break;
-            case 43: t->tmpl.bg_col = cu_cell_color_nr_yellow; break;
-            case 44: t->tmpl.bg_col = cu_cell_color_nr_blue; break;
-            case 45: t->tmpl.bg_col = cu_cell_color_nr_magenta; break;
-            case 46: t->tmpl.bg_col = cu_cell_color_nr_cyan; break;
-            case 47: t->tmpl.bg_col = cu_cell_color_nr_white; break;
-            case 90: t->tmpl.fg_col = cu_cell_color_br_black; break;
-            case 91: t->tmpl.fg_col = cu_cell_color_br_red; break;
-            case 92: t->tmpl.fg_col = cu_cell_color_br_green; break;
-            case 93: t->tmpl.fg_col = cu_cell_color_br_yellow; break;
-            case 94: t->tmpl.fg_col = cu_cell_color_br_blue; break;
-            case 95: t->tmpl.fg_col = cu_cell_color_br_magenta; break;
-            case 96: t->tmpl.fg_col = cu_cell_color_br_cyan; break;
-            case 97: t->tmpl.fg_col = cu_cell_color_br_white; break;
-            case 100: t->tmpl.bg_col = cu_cell_color_br_black; break;
-            case 101: t->tmpl.bg_col = cu_cell_color_br_red; break;
-            case 102: t->tmpl.bg_col = cu_cell_color_br_green; break;
-            case 103: t->tmpl.bg_col = cu_cell_color_br_yellow; break;
-            case 104: t->tmpl.bg_col = cu_cell_color_br_blue; break;
-            case 105: t->tmpl.bg_col = cu_cell_color_br_magenta; break;
-            case 106: t->tmpl.bg_col = cu_cell_color_br_cyan; break;
-            case 107: t->tmpl.bg_col = cu_cell_color_br_white; break;
+            case 29: t->tmpl.flags &= ~cu_cell_strikeout; break;
+            case 30: t->tmpl.fg = cu_cell_color_nr_black; break;
+            case 31: t->tmpl.fg = cu_cell_color_nr_red; break;
+            case 32: t->tmpl.fg = cu_cell_color_nr_green; break;
+            case 33: t->tmpl.fg = cu_cell_color_nr_yellow; break;
+            case 34: t->tmpl.fg = cu_cell_color_nr_blue; break;
+            case 35: t->tmpl.fg = cu_cell_color_nr_magenta; break;
+            case 36: t->tmpl.fg = cu_cell_color_nr_cyan; break;
+            case 37: t->tmpl.fg = cu_cell_color_nr_white; break;
+            case 38:
+                if (i + 2 < t->argc && t->argv[i+1] == 5) {
+                    t->tmpl.fg = cuterm_colors_256[t->argv[i+2]];
+                    i += 2;
+                }
+                else if (i + 4 < t->argc && t->argv[i+1] == 2) {
+                    uint r = cuterm_colors_256[t->argv[i+2]];
+                    uint g = cuterm_colors_256[t->argv[i+3]];
+                    uint b = cuterm_colors_256[t->argv[i+4]];
+                    t->tmpl.fg = (((uint)r << 0) | ((uint)g << 8) |
+                                  ((uint)b << 16) | ((uint)0xff << 24));
+                    i += 4;
+                }
+                break;
+            case 39: t->tmpl.fg = cu_cell_color_fg_dfl; break;
+            case 40: t->tmpl.bg = cu_cell_color_nr_black; break;
+            case 41: t->tmpl.bg = cu_cell_color_nr_red; break;
+            case 42: t->tmpl.bg = cu_cell_color_nr_green; break;
+            case 43: t->tmpl.bg = cu_cell_color_nr_yellow; break;
+            case 44: t->tmpl.bg = cu_cell_color_nr_blue; break;
+            case 45: t->tmpl.bg = cu_cell_color_nr_magenta; break;
+            case 46: t->tmpl.bg = cu_cell_color_nr_cyan; break;
+            case 47: t->tmpl.bg = cu_cell_color_nr_white; break;
+            case 48:
+                if (i + 2 < t->argc && t->argv[i+1] == 5) {
+                    t->tmpl.bg = cuterm_colors_256[t->argv[i+2]];
+                    i += 2;
+                }
+                else if (i + 4 < t->argc && t->argv[i+1] == 2) {
+                    uint r = cuterm_colors_256[t->argv[i+2]];
+                    uint g = cuterm_colors_256[t->argv[i+3]];
+                    uint b = cuterm_colors_256[t->argv[i+4]];
+                    t->tmpl.bg = (((uint)r << 0) | ((uint)g << 8) |
+                                  ((uint)b << 16) | ((uint)0xff << 24));
+                    i += 4;
+                }
+                break;
+            case 49: t->tmpl.bg = cu_cell_color_bg_dfl; break;
+            case 90: t->tmpl.fg = cu_cell_color_br_black; break;
+            case 91: t->tmpl.fg = cu_cell_color_br_red; break;
+            case 92: t->tmpl.fg = cu_cell_color_br_green; break;
+            case 93: t->tmpl.fg = cu_cell_color_br_yellow; break;
+            case 94: t->tmpl.fg = cu_cell_color_br_blue; break;
+            case 95: t->tmpl.fg = cu_cell_color_br_magenta; break;
+            case 96: t->tmpl.fg = cu_cell_color_br_cyan; break;
+            case 97: t->tmpl.fg = cu_cell_color_br_white; break;
+            case 100: t->tmpl.bg = cu_cell_color_br_black; break;
+            case 101: t->tmpl.bg = cu_cell_color_br_red; break;
+            case 102: t->tmpl.bg = cu_cell_color_br_green; break;
+            case 103: t->tmpl.bg = cu_cell_color_br_yellow; break;
+            case 104: t->tmpl.bg = cu_cell_color_br_blue; break;
+            case 105: t->tmpl.bg = cu_cell_color_br_magenta; break;
+            case 106: t->tmpl.bg = cu_cell_color_br_cyan; break;
+            case 107: t->tmpl.bg = cu_cell_color_br_white; break;
                 break;
             default:
                 break;
             }
         }
+        break;
+    case 'r': /* set scrolling region {line-start};{line-end}*/
+        cuterm_scroll_region(t, opt_arg(t, 0, 1), opt_arg(t, 1, 1));
+        break;
+    case 't': /* window manager hints */
+        cuterm_xtwinops(t);
         break;
     }
 }
@@ -682,10 +812,10 @@ restart:
     case cu_state_escape:
         switch (c) {
         case '[':
-            t->state = cu_state_csi_init;
+            t->state = cu_state_csi0;
             return;
         case ']':
-            t->state = cu_state_osc;
+            t->state = cu_state_osc0;
             return;
         case '(':
         case '*':
@@ -714,7 +844,7 @@ restart:
         cuterm_charset(t, t->code, c);
         t->state = cu_state_normal;
         break;
-    case cu_state_csi_init:
+    case cu_state_csi0:
         switch (c) {
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
@@ -722,7 +852,9 @@ restart:
             goto restart;
         case '@': case 'A': case 'B': case 'C': case 'D':
         case 'E': case 'F': case 'G': case 'H': case 'I':
-        case 'J': case 'K': case 'm': case 'd':
+        case 'J': case 'K': case 'L': case 'M': case 'P':
+        case 'm': case 'd': case 'e': case 'f': case 'r':
+        case 't':
             cuterm_csi(t, c);
             t->state = cu_state_normal;
             break;
@@ -757,7 +889,9 @@ restart:
             break;
         case '@': case 'A': case 'B': case 'C': case 'D':
         case 'E': case 'F': case 'G': case 'H': case 'I':
-        case 'J': case 'K': case 'm': case 'd':
+        case 'J': case 'K': case 'L': case 'M': case 'P':
+        case 'm': case 'd': case 'e': case 'f': case 'r':
+        case 't':
             if (t->argc < array_size(t->argv)) {
                 t->argv[t->argc++] = t->code; t->code = 0;
             } else {
@@ -787,16 +921,8 @@ restart:
                     t->code);
             }
             break;
-        case 'c':
-        case 'h':
-        case 'i':
-        case 'l':
-        case 'n':
-        case 'r':
-        case 's':
-        case 'S':
-        case 'J':
-        case 'K':
+        case 'c': case 'h': case 'i': case 'l': case 'n':
+        case 'r': case 's': case 'S': case 'J': case 'K':
             if (t->argc < array_size(t->argv)) {
                 t->argv[t->argc++] = t->code; t->code = 0;
             } else {
@@ -837,6 +963,7 @@ restart:
             t->state = cu_state_normal;
             break;
         }
+        break;
     case cu_state_csi_dec3:
         switch (c) {
         case '0': case '1': case '2': case '3': case '4':
@@ -866,7 +993,8 @@ restart:
             t->state = cu_state_normal;
             break;
         }
-    case cu_state_osc_init:
+        break;
+    case cu_state_osc0:
         switch (c) {
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
@@ -881,6 +1009,7 @@ restart:
             //t->state = cu_state_normal;
             break;
         }
+        break;
     case cu_state_osc:
         switch (c) {
         case '0': case '1': case '2': case '3': case '4':
@@ -1105,24 +1234,72 @@ void cuterm_keyboard(cu_term *t, int key, int scancode, int action, int mods)
     int c;
     switch (action) {
     case GLFW_PRESS:
-        switch (key) {
-        case GLFW_KEY_ESCAPE: cuterm_send(t, cu_char_ESC); break;
-        case GLFW_KEY_ENTER: cuterm_send(t, cu_char_LF); break;
-        case GLFW_KEY_TAB: cuterm_send(t, cu_char_HT); break;
-        case GLFW_KEY_BACKSPACE: cuterm_send(t, cu_char_BS); break;
-        case GLFW_KEY_INSERT: cuterm_write(t, "\x1b[2~", 4); break;
-        case GLFW_KEY_DELETE: cuterm_write(t, "\x1b[3~", 4); break;
-        case GLFW_KEY_PAGE_UP: cuterm_write(t, "\x1b[5~", 4); break;
-        case GLFW_KEY_PAGE_DOWN: cuterm_write(t, "\x1b[6~", 4); break;
-        case GLFW_KEY_UP: cuterm_write(t, "\x1b[A", 3); break;
-        case GLFW_KEY_DOWN: cuterm_write(t, "\x1b[B", 3); break;
-        case GLFW_KEY_RIGHT: cuterm_write(t, "\x1b[C", 3); break;
-        case GLFW_KEY_LEFT: cuterm_write(t, "\x1b[D", 3); break;
-        case GLFW_KEY_HOME: cuterm_write(t, "\x1b[H", 3); break;
-        case GLFW_KEY_END: cuterm_write(t, "\x1b[F", 3); break;
-        default:
-            c = cuterm_keycode_to_char(key, mods);
-            if (c) cuterm_send(t, c);
+        if ((t->flags & cu_flag_DECCKM) > 0) {
+            switch (key) {
+            case GLFW_KEY_ESCAPE: cuterm_send(t, cu_char_ESC); break;
+            case GLFW_KEY_ENTER: cuterm_send(t, cu_char_LF); break;
+            case GLFW_KEY_TAB: cuterm_send(t, cu_char_HT); break;
+            case GLFW_KEY_BACKSPACE: cuterm_send(t, cu_char_BS); break;
+            case GLFW_KEY_INSERT: cuterm_write(t, "\x1b[2~", 4); break; // ?
+            case GLFW_KEY_DELETE: cuterm_write(t, "\x1b[3~", 4); break; // ?
+            case GLFW_KEY_PAGE_UP: cuterm_write(t, "\x1b[5~", 4); break; // ?
+            case GLFW_KEY_PAGE_DOWN: cuterm_write(t, "\x1b[6~", 4); break; // ?
+            case GLFW_KEY_UP: cuterm_write(t, "\x1bOA", 3); break;
+            case GLFW_KEY_DOWN: cuterm_write(t, "\x1bOB", 3); break;
+            case GLFW_KEY_RIGHT: cuterm_write(t, "\x1bOC", 3); break;
+            case GLFW_KEY_LEFT: cuterm_write(t, "\x1bOD", 3); break;
+            case GLFW_KEY_HOME: cuterm_write(t, "\x1bOH", 3); break;
+            case GLFW_KEY_END: cuterm_write(t, "\x1bOF", 3); break;
+            case GLFW_KEY_F1: cuterm_write(t, "\x1bOP", 3); break;
+            case GLFW_KEY_F2: cuterm_write(t, "\x1bOQ", 3); break;
+            case GLFW_KEY_F3: cuterm_write(t, "\x1bOR", 3); break;
+            case GLFW_KEY_F4: cuterm_write(t, "\x1bOS", 3); break;
+            case GLFW_KEY_F5: cuterm_write(t, "\x1b[15~", 5); break; // ?
+            case GLFW_KEY_F6: cuterm_write(t, "\x1b[17~", 5); break; // ?
+            case GLFW_KEY_F7: cuterm_write(t, "\x1b[18~", 5); break; // ?
+            case GLFW_KEY_F8: cuterm_write(t, "\x1b[19~", 5); break; // ?
+            case GLFW_KEY_F9: cuterm_write(t, "\x1b[20~", 5); break; // ?
+            case GLFW_KEY_F10: cuterm_write(t, "\x1b[21~", 5); break; // ?
+            case GLFW_KEY_F11: cuterm_write(t, "\x1b[23~", 5); break; // ?
+            case GLFW_KEY_F12: cuterm_write(t, "\x1b[24~", 5); break; // ?
+            default:
+                c = cuterm_keycode_to_char(key, mods);
+                if (c) cuterm_send(t, c);
+                break;
+            }
+        } else {
+            switch (key) {
+            case GLFW_KEY_ESCAPE: cuterm_send(t, cu_char_ESC); break;
+            case GLFW_KEY_ENTER: cuterm_send(t, cu_char_LF); break;
+            case GLFW_KEY_TAB: cuterm_send(t, cu_char_HT); break;
+            case GLFW_KEY_BACKSPACE: cuterm_send(t, cu_char_BS); break;
+            case GLFW_KEY_INSERT: cuterm_write(t, "\x1b[2~", 4); break;
+            case GLFW_KEY_DELETE: cuterm_write(t, "\x1b[3~", 4); break;
+            case GLFW_KEY_PAGE_UP: cuterm_write(t, "\x1b[5~", 4); break;
+            case GLFW_KEY_PAGE_DOWN: cuterm_write(t, "\x1b[6~", 4); break;
+            case GLFW_KEY_UP: cuterm_write(t, "\x1b[A", 3); break;
+            case GLFW_KEY_DOWN: cuterm_write(t, "\x1b[B", 3); break;
+            case GLFW_KEY_RIGHT: cuterm_write(t, "\x1b[C", 3); break;
+            case GLFW_KEY_LEFT: cuterm_write(t, "\x1b[D", 3); break;
+            case GLFW_KEY_HOME: cuterm_write(t, "\x1b[H", 3); break;
+            case GLFW_KEY_END: cuterm_write(t, "\x1b[F", 3); break;
+            case GLFW_KEY_F1: cuterm_write(t, "\x1b[11~", 5); break;
+            case GLFW_KEY_F2: cuterm_write(t, "\x1b[12~", 5); break;
+            case GLFW_KEY_F3: cuterm_write(t, "\x1b[13~", 5); break;
+            case GLFW_KEY_F4: cuterm_write(t, "\x1b[14~", 5); break;
+            case GLFW_KEY_F5: cuterm_write(t, "\x1b[15~", 5); break;
+            case GLFW_KEY_F6: cuterm_write(t, "\x1b[17~", 5); break;
+            case GLFW_KEY_F7: cuterm_write(t, "\x1b[18~", 5); break;
+            case GLFW_KEY_F8: cuterm_write(t, "\x1b[19~", 5); break;
+            case GLFW_KEY_F9: cuterm_write(t, "\x1b[20~", 5); break;
+            case GLFW_KEY_F10: cuterm_write(t, "\x1b[21~", 5); break;
+            case GLFW_KEY_F11: cuterm_write(t, "\x1b[23~", 5); break;
+            case GLFW_KEY_F12: cuterm_write(t, "\x1b[24~", 5); break;
+            default:
+                c = cuterm_keycode_to_char(key, mods);
+                if (c) cuterm_send(t, c);
+                break;
+            }
         }
         break;
     }
