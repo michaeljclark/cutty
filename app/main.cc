@@ -57,7 +57,7 @@ static GLFWwindow* window;
 
 static const char* text_lang = "en";
 static const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
-static const char *mono1_semibold_font_path = "fonts/NotoSansMono-SemiBold.ttf";
+static const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
 
 #if defined __APPLE__
 static const float stats_font_size = 12.5f;
@@ -74,7 +74,7 @@ static ullong tl, tn;
 static bool help_text = false;
 static bool overlay_stats = false;
 static cu_font_metric fm;
-static font_face *mono1_regular, *mono1_semibold;
+static font_face *mono1_regular, *mono1_bold;
 static int framebuffer_width, framebuffer_height;
 static uint cursor_color = 0x40000000;
 
@@ -213,7 +213,7 @@ static font_face_ft* cell_font(cu_term *term, cu_cell &cell)
     font_face *face;
 
     if (cell.flags & cu_cell_bold) {
-        face = mono1_semibold;
+        face = mono1_bold;
     } else {
         face = mono1_regular;
     }
@@ -604,7 +604,7 @@ static void initialize()
 
     /* fetch our sans font */
     mono1_regular = manager.findFontByPath(mono1_regular_font_path);
-    mono1_semibold = manager.findFontByPath(mono1_semibold_font_path);
+    mono1_bold = manager.findFontByPath(mono1_bold_font_path);
 
     /* measure font */
     fm = get_font_metrics(mono1_regular, terminal_font_size, 'M');
