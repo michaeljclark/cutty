@@ -55,22 +55,27 @@ static MVGCanvas canvas(&manager);
 static mat4 mvp;
 static GLFWwindow* window;
 
+static const char* text_lang = "en";
 static const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
 static const char *mono1_semibold_font_path = "fonts/NotoSansMono-SemiBold.ttf";
 
-static const char* text_lang = "en";
+#if defined __APPLE__
 static const float stats_font_size = 12.5f;
 static const float terminal_font_size = 12.5f;
+static int window_width = 640, window_height = 420;
+#else
+static const float stats_font_size = 25.0f;
+static const float terminal_font_size = 25.0f;
+static int window_width = 1280, window_height = 840;
+#endif
 
-static cu_font_metric fm;
-static font_face *mono1_regular, *mono1_semibold;
-
-static int window_width = 640, window_height = 440;
-static int framebuffer_width, framebuffer_height;
-
+static float rs;
 static ullong tl, tn;
 static bool help_text = false;
 static bool overlay_stats = false;
+static cu_font_metric fm;
+static font_face *mono1_regular, *mono1_semibold;
+static int framebuffer_width, framebuffer_height;
 
 /* canvas state */
 
@@ -184,7 +189,7 @@ static std::vector<std::string> get_stats()
 static void render_stats(draw_list &batch)
 {
     text_shaper_hb shaper;
-    text_renderer_ft renderer(&manager);
+    text_renderer_ft renderer(&manager, rs);
 
     uint32_t c = 0xff000000;
     float x = window_width - 20.0f, y = 30.0f;
@@ -254,7 +259,7 @@ static cu_dim render_loop(cu_term *term, int rows, int cols,
 
 static void render_terminal(cu_term *term, draw_list &batch)
 {
-    text_renderer_ft renderer(&manager);
+    text_renderer_ft renderer(&manager, rs);
     std::vector<glyph_shape> shapes;
 
     int rows = (int)std::max(0.f, window_height - 25.0f) / fm.leading;
@@ -357,13 +362,15 @@ static void update()
 
     /* set up scale/translate matrix */
     float s = 1.0f;
+    float ds = sqrtf((float)(framebuffer_width * framebuffer_height) /
+                     (float)(window_width * window_height));
     float tx = window_width/2.0f;
     float ty = window_height/2.0f;
     canvas.set_transform(mat3(s,  0,  tx,
                               0,  s,  ty,
                               0,  0,  1));
-    canvas.set_scale(sqrtf((framebuffer_width * framebuffer_height) /
-        (float)(window_width * window_height)));
+    canvas.set_scale(ds);
+    rs = 1.f/ds;
 
     /* emit canvas draw list */
     canvas.clear();

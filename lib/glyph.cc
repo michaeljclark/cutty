@@ -745,15 +745,15 @@ void text_renderer_ft::render(draw_list &batch,
     /* lookup glyphs in font atlas, creating them if they don't exist */
     float dx = 0, dy = 0;
     for (auto &shape : shapes) {
-        glyph_entry *ge = manager->lookup(face, font_size*2.0f, shape.glyph);
+        glyph_entry *ge = manager->lookup(face, font_size/rs, shape.glyph);
         if (!ge) continue;
         /* create polygons in vertex array */
         glm::vec3 v = glm::vec3(segment.x, segment.y, 1.0f) * m;
-        float x1 = v.x / v.z + ge->ox/2.0f + dx + shape.x_offset/64.0f;
-        float x2 = x1 + ge->w/2.0f;
-        float y1 = v.y / v.z - ge->oy/2.0f + dy + shape.y_offset/64.0f -
-            ge->h/2.0f - baseline_shift;
-        float y2 = y1 + ge->h/2.0f;
+        float x1 = v.x / v.z + ge->ox * rs + dx + shape.x_offset/64.0f;
+        float x2 = x1 + ge->w * rs;
+        float y1 = v.y / v.z - ge->oy * rs + dy + shape.y_offset/64.0f -
+            ge->h * rs - baseline_shift;
+        float y2 = y1 + ge->h * rs;
         if (ge->w > 0 && ge->h > 0) {
             float u1 = ge->uv[0], v1 = ge->uv[1];
             float u2 = ge->uv[2], v2 = ge->uv[3];

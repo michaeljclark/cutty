@@ -311,8 +311,10 @@ struct text_renderer_ft : text_renderer
 {
     font_manager* manager;
     std::unique_ptr<glyph_renderer> renderer;
+    float rs;
 
     text_renderer_ft(font_manager* manager);
+    text_renderer_ft(font_manager* manager, float rs);
     virtual ~text_renderer_ft() = default;
 
     void render(draw_list &batch,
@@ -321,4 +323,6 @@ struct text_renderer_ft : text_renderer
 };
 
 inline text_renderer_ft::text_renderer_ft(font_manager* manager) :
-    manager(manager) {}
+    manager(manager), rs(1.f) {}
+inline text_renderer_ft::text_renderer_ft(font_manager* manager, float rs) :
+    manager(manager), rs(rs) {}
