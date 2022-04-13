@@ -271,6 +271,31 @@ static void cuterm_resize(cu_term *t)
     }
 }
 
+void cuterm_winsize(cu_term *t)
+{
+    if (t->ws.ws_col != t->vis_cols || t->ws.ws_row != t->vis_rows) {
+        Debug("window size changed: %dx%d -> %dx%d\n",
+            t->ws.ws_col, t->ws.ws_row, t->vis_cols, t->vis_rows);
+        t->ws.ws_col = t->vis_cols;
+        t->ws.ws_row = t->vis_rows;
+        if (ioctl(t->fd, TIOCSWINSZ, (char *) &t->ws) < 0) {
+            Error("cuterm_winsize: ioctl(TIOCSWINSZ) failed: %s\n",
+                strerror(errno));
+            return;
+        }
+        pid_t pgrp;
+        if (ioctl(t->fd, TIOCGPGRP, &pgrp) < 0) {
+            Error("cuterm_winsize: ioctl(TIOCGPGRP) failed: %s\n",
+                strerror(errno));
+            return;
+        }
+        if (kill(-pgrp, SIGWINCH) < 0) {
+            Error("cuterm_winsize: kill(%d,SIGWINCH) failed: %s\n",
+                -pgrp, strerror(errno));
+        }
+    }
+}
+
 static void cuterm_move_abs(cu_term *t, int row, int col)
 {
     if (row != -1) {

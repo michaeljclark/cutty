@@ -4,6 +4,8 @@
 #include <poll.h>
 #include <unistd.h>
 #include <termios.h>
+#include <signal.h>
+#include <sys/ioctl.h>
 
 #if defined(__linux__)
 #include <pty.h>
@@ -223,6 +225,7 @@ void cuterm_init(cu_term *term);
 void cuterm_close(cu_term *term);
 int cuterm_fork(cu_term *term, uint cols, uint rows);
 void cuterm_reset(cu_term *term);
+void cuterm_winsize(cu_term *term);
 ssize_t cuterm_io(cu_term *term);
 ssize_t cuterm_process(cu_term *term);
 ssize_t cuterm_write(cu_term *term, const char *buf, size_t len);

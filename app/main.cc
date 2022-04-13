@@ -685,6 +685,7 @@ static void cuterm_main(int argc, char **argv)
         update();
         display();
         glfwSwapBuffers(window);
+        cuterm_winsize(term.get());
         glfwPollEvents();
         do if (cuterm_io(term.get()) < 0) {
             glfwSetWindowShouldClose(window, 1);
