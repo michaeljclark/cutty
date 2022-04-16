@@ -742,6 +742,9 @@ void text_renderer_ft::render(draw_list &batch,
     float baseline_shift = segment.baseline_shift * scale;
 	float tracking = segment.tracking * scale;
 
+    // emoji fonts need this flag set to generate color atlases
+    bool color_enabled = (face->flags & font_face_color) > 0;
+
     /* lookup glyphs in font atlas, creating them if they don't exist */
     float dx = 0, dy = 0;
     for (auto &shape : shapes) {
@@ -758,16 +761,20 @@ void text_renderer_ft::render(draw_list &batch,
             float u1 = ge->uv[0], v1 = ge->uv[1];
             float u2 = ge->uv[2], v2 = ge->uv[3];
             uint o = (int)batch.vertices.size();
-            uint c = shape.color ? shape.color : segment.color;
+            // emoji textures need the color to be white
+            uint c = color_enabled ? 0xffffffff :
+                        shape.color ? shape.color : segment.color;
             shape.pos[0] = {x1, y1, 0};
             shape.pos[1] = {x2, y2, 0};
             uint o0 = draw_list_vertex(batch, {{x1, y1, 0}, {u1, v1}, c});
             uint o1 = draw_list_vertex(batch, {{x2, y1, 0}, {u2, v1}, c});
             uint o2 = draw_list_vertex(batch, {{x2, y2, 0}, {u2, v2}, c});
             uint o3 = draw_list_vertex(batch, {{x1, y2, 0}, {u1, v2}, c});
+            // msdf textures are color but font color flag is not set
+            uint shader = ge->atlas->depth == 4 && !color_enabled ?
+                shader_msdf : shader_texture;
             draw_list_indices(batch, ge->atlas->get_image()->iid, mode_triangles,
-                ge->atlas->depth == 4 ? shader_msdf : shader_texture,
-                {o0, o3, o1, o1, o3, o2});
+                shader, {o0, o3, o1, o1, o3, o2});
             draw_list_image_delta(batch, ge->atlas->get_image(), ge->atlas->get_delta(),
                 st_clamp | atlas_image_filter(ge->atlas));
         }

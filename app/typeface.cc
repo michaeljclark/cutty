@@ -32,6 +32,7 @@
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
 
+static const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
 static const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
 static const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
 
@@ -102,6 +103,8 @@ void cu_typeface_init(cu_cellgrid *cg)
     }
 
     /* fetch our sans font */
+    cg->mono1_emoji = cg->manager->findFontByPath(mono1_emoji_font_path);
+    cg->mono1_emoji->flags |= font_face_color;
     cg->mono1_regular = cg->manager->findFontByPath(mono1_regular_font_path);
     cg->mono1_bold = cg->manager->findFontByPath(mono1_bold_font_path);
 

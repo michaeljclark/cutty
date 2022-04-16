@@ -428,7 +428,7 @@ std::string font_spec::toString() const
 /* Font Manager (FreeType) */
 
 font_manager_ft::font_manager_ft(std::string fontDir) : font_manager(),
-    color_enabled(false), msdf_enabled(false), msdf_autoload(false)
+    msdf_enabled(false), msdf_autoload(false)
 {
     FT_Error fterr;
     if ((fterr = FT_Init_FreeType(&ftlib))) {
@@ -549,6 +549,7 @@ font_atlas* font_manager_ft::getNewAtlas(font_face *face)
     }
     /* if load failed, allocate backing store using default size */
     if (!atlas->pixels) {
+        bool color_enabled = (face->flags & font_face_color) > 0;
         atlas->reset(font_atlas::DEFAULT_WIDTH, font_atlas::DEFAULT_HEIGHT,
             color_enabled ? font_atlas::COLOR_DEPTH :
             msdf_enabled ? font_atlas::MSDF_DEPTH :
@@ -592,6 +593,7 @@ glyph_renderer* font_manager_ft::getGlyphRenderer(font_face *face, int glyph)
 
     /* emoji - 0x1F000 - 0x1FFFF */
 
+    bool color_enabled = (face->flags & font_face_color) > 0;
     return color_enabled ? static_cast<glyph_renderer*>(&color) :
            msdf_enabled  ? static_cast<glyph_renderer*>(&msdf) :
                            static_cast<glyph_renderer*>(&outline);

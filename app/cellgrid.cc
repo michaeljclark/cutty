@@ -57,9 +57,13 @@ static font_face_ft* cell_font(cu_cellgrid *cg, cu_cell &cell)
 {
     font_face *face;
 
-    if (cell.flags & cu_cell_bold) {
+    if (cell.codepoint >= 0x1f000 && cell.codepoint <= 0x1ffff) {
+        face = cg->mono1_emoji;
+    }
+    else if (cell.flags & cu_cell_bold) {
         face = cg->mono1_bold;
-    } else {
+    }
+    else {
         face = cg->mono1_regular;
     }
 

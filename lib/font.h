@@ -179,12 +179,18 @@ struct font_data
 
 /* Font Face */
 
+enum font_face_flags {
+    font_face_color = (1 << 0),
+    font_face_msdf =  (1 << 1)
+};
+
 struct font_face
 {
     int font_id;
     std::string path;
     std::string name;
     font_data fontData;
+    int flags;
 
     font_face() = default;
     font_face(int font_id, std::string path, std::string name);
@@ -196,7 +202,7 @@ struct font_face
 };
 
 inline font_face::font_face(int font_id, std::string path, std::string name) :
-    font_id(font_id), path(path), name(name) {}
+    font_id(font_id), path(path), name(name), fontData(), flags(0) {}
 
 
 /*
@@ -327,7 +333,6 @@ struct font_face_ft : font_face
 struct font_manager_ft : font_manager
 {
     FT_Library ftlib;
-    bool color_enabled;
     bool msdf_enabled;
     bool msdf_autoload;
 

@@ -7,6 +7,7 @@ struct cu_cellgrid
     cu_font_metric fm;
     uint cursor_color;
     const char* text_lang;
+    font_face *mono1_emoji;
     font_face *mono1_regular;
     font_face *mono1_bold;
     float width;
