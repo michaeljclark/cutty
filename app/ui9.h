@@ -9,16 +9,16 @@ namespace ui9 {
 using vec3 = glm::vec3;
 using ivec2 = glm::ivec2;
 
-bool operator<(const vec3 &a, const vec3 &b)
+static bool operator<(const vec3 &a, const vec3 &b)
 {
     return (a[0] < b[0]) ||
            (a[0] == b[0] && a[1] < b[1]) ||
            (a[0] == b[0] && a[1] == b[1] && a[2] < b[2]);
 }
 
-bool operator>(const vec3 &a, const vec3 &b) { return b < a; }
-bool operator<=(const vec3 &a, const vec3 &b) { return a < b || a == b; }
-bool operator>=(const vec3 &a, const vec3 &b) { return b < a || a == b; }
+static bool operator>(const vec3 &a, const vec3 &b) { return b < a; }
+static bool operator<=(const vec3 &a, const vec3 &b) { return a < b || a == b; }
+static bool operator>=(const vec3 &a, const vec3 &b) { return b < a || a == b; }
 
 typedef enum {
     trim_leading = 0x1,

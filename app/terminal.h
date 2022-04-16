@@ -1,25 +1,5 @@
 #pragma once
 
-#include <time.h>
-#include <poll.h>
-#include <unistd.h>
-#include <termios.h>
-#include <signal.h>
-#include <sys/ioctl.h>
-
-#if defined(__linux__)
-#include <pty.h>
-#endif
-#if defined(__APPLE__)
-#include <util.h>
-#endif
-#if defined(__FreeBSD__)
-#include <libutil.h>
-#endif
-
-#include <string>
-#include <vector>
-
 typedef long long llong;
 typedef unsigned char uchar;
 typedef unsigned short ushort;
@@ -142,9 +122,9 @@ enum cu_char
 
 enum cu_clear
 {
-	cuterm_clear_end,
-	cuterm_clear_start,
-	cuterm_clear_all
+	cu_term_clear_end,
+	cu_term_clear_start,
+	cu_term_clear_all
 };
 
 enum cu_state
@@ -189,12 +169,21 @@ struct cu_font_metric
 	float underline_thickness;
 };
 
-struct cu_dim
+struct cu_winsize
 {
 	int vis_lines;
 	int vis_rows;
 	int vis_cols;
+	int pix_width;
+	int pix_height;
+
+	template <typename... Args> constexpr auto tuple() {
+		return std::tie(vis_lines, vis_rows, vis_cols, pix_width, pix_height);
+	}
 };
+
+inline bool operator==(cu_winsize &a, cu_winsize&b) { return a.tuple() == b.tuple(); }
+inline bool operator!=(cu_winsize &a, cu_winsize&b) { return a.tuple() != b.tuple(); }
 
 struct cu_term
 {
@@ -207,10 +196,6 @@ struct cu_term
 	uint fd;
 	uint needs_update;
 	std::string osc_string;
-
-    struct winsize ws;
-    struct termios tio;
-	char slave[PATH_MAX];
 
 	std::vector<uchar> in_buf;
 	ssize_t in_start;
@@ -231,14 +216,12 @@ struct cu_term
 	uint bot_marg;
 };
 
-extern uint cuterm_colors_256[256];
-
-void cuterm_init(cu_term *term);
-void cuterm_close(cu_term *term);
-int cuterm_fork(cu_term *term, uint cols, uint rows);
-void cuterm_reset(cu_term *term);
-void cuterm_winsize(cu_term *term);
-ssize_t cuterm_io(cu_term *term);
-ssize_t cuterm_process(cu_term *term);
-ssize_t cuterm_write(cu_term *term, const char *buf, size_t len);
-void cuterm_keyboard(cu_term *term, int key, int scancode, int action, int mods);
+cu_term* cu_term_new();
+void cu_term_close(cu_term *term);
+void cu_term_set_fd(cu_term *term, int fd);
+void cu_term_set_dim(cu_term *term, cu_winsize dim);
+void cu_term_reset(cu_term *term);
+ssize_t cu_term_io(cu_term *term);
+ssize_t cu_term_process(cu_term *term);
+ssize_t cu_term_write(cu_term *term, const char *buf, size_t len);
+void cu_term_keyboard(cu_term *term, int key, int scancode, int action, int mods);

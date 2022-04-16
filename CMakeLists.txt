@@ -166,7 +166,16 @@ if (have_forkpty_libutil_h OR have_forkpty_pty_h)
   list(APPEND UTIL_LIBS util)
 endif()
 
-add_executable(cuterm app/main.cc app/terminal.cc app/colors.cc)
+set(cuterm_sources
+    app/app.cc
+    app/cellgrid.cc
+    app/colors.cc
+    app/process.cc
+    app/render.cc
+    app/terminal.cc
+    app/typeface.cc)
+
+add_executable(cuterm ${cuterm_sources})
 target_link_libraries(cuterm ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
 target_compile_definitions(cuterm PRIVATE -DHAVE_GLAD)
 if(WIN32)
