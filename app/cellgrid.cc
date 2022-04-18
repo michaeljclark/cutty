@@ -27,23 +27,31 @@
 #include "cellgrid.h"
 #include "typeface.h"
 
-cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term)
+cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term, bool test_mode)
 {
     cu_cellgrid *cg = new cu_cellgrid{};
 
     cg->term = term;
     cg->manager = manager;
-#if defined __APPLE__
-    cg->width = 630;
-    cg->height = 440;
-    cg->font_size = 12.5f;
-    cg->margin = 15.0f;
-#else
-    cg->width = 1260;
-    cg->height = 860;
-    cg->font_size = 25.0f;
-    cg->margin = 30.0f;
-#endif
+
+    if (test_mode) {
+        cg->width = 1200;
+        cg->height = 800;
+        cg->font_size = 25.0f;
+        cg->margin = 0.0f;
+    } else {
+        #if defined __APPLE__
+        cg->width = 630;
+        cg->height = 440;
+        cg->font_size = 12.5f;
+        cg->margin = 15.0f;
+        #else
+        cg->width = 1260;
+        cg->height = 860;
+        cg->font_size = 25.0f;
+        cg->margin = 30.0f;
+        #endif
+    }
     cg->cursor_color = 0x40000000;
     cg->text_lang = "en";
     cg->rscale = 1.0f;

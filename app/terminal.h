@@ -194,7 +194,8 @@ struct cu_term
 	uint argc;
 	uint argv[5];
 	uint fd;
-	uint needs_update;
+	uchar needs_update;
+	uchar needs_capture;
 	std::string osc_string;
 
 	std::vector<uchar> in_buf;

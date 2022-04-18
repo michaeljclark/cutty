@@ -178,15 +178,17 @@ cu_winsize cu_render_opengl::update()
     canvas.set_scale(cg->rscale);
 
     /* emit canvas draw list */
-    color white = color(1.0f, 1.0f, 1.0f, 1.0f);
-    color black = color(0.0f, 0.0f, 0.0f, 1.0f);
-    float w = 2.0f, m = cg->margin/2.f + w;
-    canvas.clear();
-    canvas.set_fill_brush(MVGBrush{MVGBrushSolid, { }, { white }});
-    canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { black }});
-    canvas.set_stroke_width(w);
-    canvas.new_rounded_rectangle(vec2(0), vec2(tx - m, ty - m), m);
-    canvas.emit(batch);
+    if ((flags & cu_render_background) > 0) {
+	    color white = color(1.0f, 1.0f, 1.0f, 1.0f);
+	    color black = color(0.0f, 0.0f, 0.0f, 1.0f);
+	    float w = 2.0f, m = cg->margin/2.f + w;
+	    canvas.clear();
+	    canvas.set_fill_brush(MVGBrush{MVGBrushSolid, { }, { white }});
+	    canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { black }});
+	    canvas.set_stroke_width(w);
+	    canvas.new_rounded_rectangle(vec2(0), vec2(tx - m, ty - m), m);
+	    canvas.emit(batch);
+	}
 
     dim = cu_cellgrid_draw(cg, batch);
 

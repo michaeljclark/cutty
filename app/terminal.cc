@@ -70,7 +70,7 @@ cu_term* cu_term_new()
     t->cur_row = 0;
     t->cur_col = 0;
 
-    t->needs_update++;
+    t->needs_update = 1;
 
     return t;
 }
@@ -455,8 +455,9 @@ static void cu_term_osc(cu_term *t, uint c)
 {
     Debug("cu_term_osc: %s %s unimplemented\n",
         esc_args(t).c_str(), char_str(c).c_str());
-    if (t->argc == 1 && t->argv[0] == 999) {
-        printf("screen-capture\n");
+    if (t->argc == 1 && t->argv[0] == 555) {
+        Debug("cu_term_osc: screen-capture\n");
+        t->needs_capture = 1;
     }
 }
 
@@ -1000,7 +1001,7 @@ restart:
         }
         break;
     }
-    t->needs_update++;
+    t->needs_update = 1;
 }
 
 ssize_t cu_term_io(cu_term *t)

@@ -1,7 +1,15 @@
 #pragma once
 
+enum cu_render_flag
+{
+	cu_render_background = (1 << 0)
+};
+
 struct cu_render
 {
+	int flags;
+
+	inline cu_render() : flags(cu_render_background) {}
 	virtual ~cu_render() = default;
 
 	virtual void set_overlay(bool val) = 0;

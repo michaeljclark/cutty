@@ -19,7 +19,14 @@
 #include <vector>
 #include <map>
 
+#if defined(USE_OSMESA)
+#define GL_GLEXT_PROTOTYPES
+#include <GL/gl.h>
+#include <GL/glext.h>
+#include "GL/osmesa.h"
+#else
 #include <glad/glad.h>
+#endif
 #include <GLFW/glfw3.h>
 
 #include "glm/glm.hpp"
@@ -90,11 +97,13 @@ static GLuint compile_shader(GLenum type, const char *filename)
         buf.resize(length + 1);
         glGetShaderInfoLog(shader, (GLsizei)buf.size() - 1, &length, buf.data());
         Debug("shader compile log: %s\n", buf.data());
+    } else {
+        buf.resize(0);
     }
 
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
     if (status == GL_FALSE) {
-        Error("failed to compile shader: %s\n", filename);
+        Error("failed to compile shader: %s:\n%s\n", filename, buf.data());
         exit(1);
     }
 

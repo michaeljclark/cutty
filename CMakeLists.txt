@@ -167,7 +167,6 @@ if (have_forkpty_libutil_h OR have_forkpty_pty_h)
 endif()
 
 set(cuterm_sources
-    app/app.cc
     app/cellgrid.cc
     app/colors.cc
     app/process.cc
@@ -175,9 +174,34 @@ set(cuterm_sources
     app/terminal.cc
     app/typeface.cc)
 
-add_executable(cuterm ${cuterm_sources})
+include_directories(app)
+add_executable(cuterm app/app.cc ${cuterm_sources})
 target_link_libraries(cuterm ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
 target_compile_definitions(cuterm PRIVATE -DHAVE_GLAD)
 if(WIN32)
   set_property(TARGET cuterm PROPERTY WIN32_EXECUTABLE TRUE)
+endif()
+
+#
+# screen capture and OCR tests using osmesa and tesseract OCR
+#
+
+# FindOSMesa does not find the library on systems that do not use pkg-config.
+# OSMesa can be built using this script: https://github.com/devernay/osmesa-install
+
+set (OSMESA_DIR /opt/osmesa)
+set (LLVM_DIR /opt/llvm)
+
+find_path(OSMESA_INCLUDE GL/osmesa.h PATHS ${OSMESA_DIR}/include NO_CMAKE_SYSTEM_PATH NO_CACHE)
+find_library(OSMESA_LIBRARY OSMesa32 PATHS ${OSMESA_DIR}/lib NO_CMAKE_SYSTEM_PATH NO_CACHE)
+find_path(LLVM_INCLUDE llvm/Pass.h PATHS ${LLVM_DIR}/include NO_CMAKE_SYSTEM_PATH NO_CACHE)
+find_library(LLVM_LIBRARY LLVM PATHS ${LLVM_DIR}/lib NO_CMAKE_SYSTEM_PATH NO_CACHE)
+find_program(TESSERACT_BINARY tesseract)
+
+if (OSMESA_LIBRARY AND LLVM_LIBRARY AND TESSERACT_BINARY)
+add_executable(capture util/capture.cc ${cuterm_sources})
+target_include_directories(capture PUBLIC ${OSMESA_DIR}/include)
+target_compile_definitions(capture PUBLIC USE_OSMESA=1)
+target_link_options(capture PUBLIC -L${OSMESA_DIR}/lib -L${LLVM_DIR}/lib)
+target_link_libraries(capture ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${UTIL_LIBS} OSMesa32 LLVM)
 endif()
