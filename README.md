@@ -1,11 +1,14 @@
-# cuterm
+# cutty
 
-cuterm is an OpenGL terminal emulator using FreeType and HarfBuzz.
+cutty is an OpenGL terminal emulator using FreeType and HarfBuzz.
+
+![cutty](/images/cutty-screenshot.png)
 
 ## Building
 
-The cuterm terminal emulator uses cmake to build. All runtime dependencies
-besides OpenGL are included as submodules.
+The cutty terminal emulator uses cmake to build. All runtime dependencies
+besides OpenGL are included as submodules. tesseract OCR and osmesa are
+required to run the tests. It is recommended to build cutty using Ninja:
 
 ```
 cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(cuterm)
+project(cutty)
 
 #
 # project settings
@@ -163,7 +163,7 @@ if (have_forkpty_libutil_h OR have_forkpty_pty_h)
   list(APPEND UTIL_LIBS util)
 endif()
 
-set(cuterm_sources
+set(cutty_sources
     app/cellgrid.cc
     app/colors.cc
     app/process.cc
@@ -172,11 +172,11 @@ set(cuterm_sources
     app/typeface.cc)
 
 include_directories(app)
-add_executable(cuterm app/app.cc ${cuterm_sources})
-target_link_libraries(cuterm ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
-target_compile_definitions(cuterm PRIVATE -DHAVE_GLAD)
+add_executable(terminal app/app.cc ${cutty_sources})
+target_link_libraries(terminal ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
+target_compile_definitions(terminal PRIVATE -DHAVE_GLAD)
 if(WIN32)
-  set_property(TARGET cuterm PROPERTY WIN32_EXECUTABLE TRUE)
+  set_property(TARGET terminal PROPERTY WIN32_EXECUTABLE TRUE)
 endif()
 
 #
@@ -219,7 +219,7 @@ find_program(TESSERACT_BINARY tesseract)
 
 # build capture test program
 if (OSMESA_LDFLAGS AND TESSERACT_BINARY)
-add_executable(capture util/capture.cc ${cuterm_sources})
+add_executable(capture util/capture.cc ${cutty_sources})
 target_include_directories(capture PUBLIC ${OSMESA_INCLUDE})
 target_compile_definitions(capture PUBLIC USE_OSMESA=1)
 target_link_libraries(capture ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${UTIL_LIBS} ${OSMESA_LDFLAGS} ${OSMESA_LIBS})
