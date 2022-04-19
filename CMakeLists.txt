@@ -134,9 +134,6 @@ list(APPEND GLYB_LIBS
   glyb
   lib_msdfgen)
 
-set(GLAD_LIBRARIES ${GLAD_LIBRARIES} PARENT_SCOPE)
-set(GLYB_LIBS ${GLYB_LIBS} PARENT_SCOPE)
-
 #
 # Test programs
 #
@@ -192,16 +189,38 @@ endif()
 set (OSMESA_DIR /opt/osmesa)
 set (LLVM_DIR /opt/llvm)
 
-find_path(OSMESA_INCLUDE GL/osmesa.h PATHS ${OSMESA_DIR}/include NO_CMAKE_SYSTEM_PATH NO_CACHE)
-find_library(OSMESA_LIBRARY OSMesa32 PATHS ${OSMESA_DIR}/lib NO_CMAKE_SYSTEM_PATH NO_CACHE)
-find_path(LLVM_INCLUDE llvm/Pass.h PATHS ${LLVM_DIR}/include NO_CMAKE_SYSTEM_PATH NO_CACHE)
-find_library(LLVM_LIBRARY LLVM PATHS ${LLVM_DIR}/lib NO_CMAKE_SYSTEM_PATH NO_CACHE)
+# try to find OSMesa using pkg-config
+find_package(PkgConfig)
+pkg_check_modules(OSMESA osmesa)
+
+# otherwise try to find OSMesa headers and library ourselves
+if (NOT OSMESA_FOUND)
+  find_path(OSMESA_INCLUDE GL/osmesa.h PATHS ${OSMESA_DIR}/include NO_CMAKE_SYSTEM_PATH NO_CACHE)
+  find_library(OSMESA_LIBRARY OSMesa32 PATHS ${OSMESA_DIR}/lib NO_CMAKE_SYSTEM_PATH NO_CACHE)
+  set(OSMESA_LDFLAGS -L${OSMESA_DIR}/lib)
+
+  # find LLVM library using llvm-config, as osmesa-install mesa depends on LLVM
+  find_program(LLVM_CONFIG NAMES llvm-config REQUIRED PATHS /usr/bin /opt/llvm/bin)
+  exec_program(${LLVM_CONFIG} ARGS --ldflags OUTPUT_VARIABLE LLVM_LDFLAGS)
+  exec_program(${LLVM_CONFIG} ARGS --libs OUTPUT_VARIABLE LLVM_LIBS)
+  separate_arguments(LLVM_LDFLAGS UNIX_COMMAND "${LLVM_LDFLAGS}")
+  separate_arguments(LLVM_LIBS UNIX_COMMAND "${LLVM_LIBS}")
+
+  # put the results together
+  if (OSMESA_LIBRARY AND LLVM_LIBS)
+    set(OSMESA_LDFLAGS ${OSMESA_LDFLAGS} ${LLVM_LDFLAGS})
+    set(OSMESA_LIBS ${OSMESA_LIBRARY} ${LLVM_LIBS} ncurses)
+  endif()
+endif()
+
+
+# find tesseract
 find_program(TESSERACT_BINARY tesseract)
 
-if (OSMESA_LIBRARY AND LLVM_LIBRARY AND TESSERACT_BINARY)
+# build capture test program
+if (OSMESA_LDFLAGS AND TESSERACT_BINARY)
 add_executable(capture util/capture.cc ${cuterm_sources})
-target_include_directories(capture PUBLIC ${OSMESA_DIR}/include)
+target_include_directories(capture PUBLIC ${OSMESA_INCLUDE})
 target_compile_definitions(capture PUBLIC USE_OSMESA=1)
-target_link_options(capture PUBLIC -L${OSMESA_DIR}/lib -L${LLVM_DIR}/lib)
-target_link_libraries(capture ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${UTIL_LIBS} OSMesa32 LLVM)
+target_link_libraries(capture ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${UTIL_LIBS} ${OSMESA_LDFLAGS} ${OSMESA_LIBS})
 endif()
