@@ -16,8 +16,10 @@ def simplify_box_file(input_file, width, height, cellw, cellh):
         for line in lines:
             d = list(map(str.strip, line.split(' ')))
             c, x1, y1, x2, y2 = d[0], float(d[1]), float(d[2]), float(d[3]), float(d[4])
-            col = 1 + int(math.floor(((x1 / cellw) + (x2 / cellw)) / 2.0))
-            row = 1 + int(math.floor((((height-y1) / cellh) + ((height-y2) / cellh)) / 2.0))
+            fcol = (((x1 / cellw) + (x2 / cellw)) / 2.0)
+            frow = ((((height-y1) / cellh) + ((height-y2) / cellh)) / 2.0)
+            col = 1 + int(math.floor(fcol))
+            row = 1 + int(math.floor(frow))
             if lrow == row and lcol == col-1:
                 text += c
             elif lrow == row and lcol == col-2:

@@ -25,10 +25,11 @@ for test_sbox in sbox_files:
     capture_png = 'tmp/%s.png' % test_name
     capture_prefix = 'tmp/%s' % test_name
     test_box = 'tmp/%s.box' % test_name
+    test_sbox_out = 'tmp/%s.sbox' % test_name
     if os.path.exists(test_exe):
         capture_cmd = [ 'build/capture', '-o', capture_png, '-x', test_exe ]
         ret = subprocess.run(capture_cmd, check=True, env=mesa_env)
-        tesseract_cmd = [ 'tesseract', '--psm', '6', '-l', 'eng', capture_png, capture_prefix, 'makebox' ]
+        tesseract_cmd = [ 'tesseract', '--dpi', '72', '--psm', '6', '-l', 'eng', capture_png, capture_prefix, 'makebox' ]
         ret = subprocess.run(tesseract_cmd, check=True)
         data1 = readbox.simplify_box_file(test_box, 1200, 800, 1200/80, 800/24)
         data2 = readbox.read_sbox_file(test_sbox)
@@ -37,6 +38,7 @@ for test_sbox in sbox_files:
             pass_count += 1
         else:
             print("%s: FAIL" % test_name)
+            readbox.write_sbox_file(data1, test_sbox_out)
 
 print("=== %d out of %d pass ===" % (pass_count, len(sbox_files)))
 
