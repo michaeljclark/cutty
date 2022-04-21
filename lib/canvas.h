@@ -384,6 +384,7 @@ struct MVGRect : MVGPrimitive
 struct MVGCanvas
 {
     std::vector<MVGDrawable::Ptr> objects;
+    size_t emitted_index;
     std::map<int,int> glyph_map;
     std::unique_ptr<AContext> ctx;
     text_shaper_hb text_shaper;

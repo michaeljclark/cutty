@@ -596,7 +596,7 @@ void MVGRect::set_radius(float v) { radius = v; }
  */
 
 MVGCanvas::MVGCanvas(font_manager* manager) :
-    objects(), glyph_map(), ctx(std::make_unique<AContext>()),
+    objects(), emitted_index(0), glyph_map(), ctx(std::make_unique<AContext>()),
     text_renderer_c(*ctx, glyph_map), text_renderer_r(manager), manager(manager),
     fill_brush{MVGBrushSolid, {vec2(0)}, {color(0,0,0,1)}},
     stroke_brush{MVGBrushSolid, {vec2(0)}, {color(0,0,0,1)}},
@@ -699,6 +699,7 @@ void MVGCanvas::clear()
     glyph_map.clear();
     objects.clear();
     ctx->clear();
+    emitted_index = 0;
     fill_brush = MVGBrush{MVGBrushSolid, {vec2(0)}, {color(0,0,0,1)}};
     stroke_brush = MVGBrush{MVGBrushSolid, {vec2(0)}, {color(0,0,0,1)}};
     stroke_width = 0;
@@ -782,10 +783,8 @@ MVGRect* MVGCanvas::new_rounded_rectangle(vec2 pos, vec2 half_size, float radius
 
 void MVGCanvas::emit(draw_list &batch)
 {
-    glyph_map.clear();
-    ctx->clear();
-
-    for (auto &o : objects) {
+    for (size_t i = emitted_index; i < objects.size(); i++) {
+        auto &o = objects[i];
         if (!o->visible) continue;
         switch (o->drawable_type) {
         case drawable_patch: {
@@ -951,4 +950,5 @@ void MVGCanvas::emit(draw_list &batch)
         }
         }
     }
+    emitted_index = objects.size();
 }
