@@ -19,6 +19,7 @@
 #include "draw.h"
 #include "font.h"
 #include "glyph.h"
+#include "canvas.h"
 #include "color.h"
 #include "logger.h"
 

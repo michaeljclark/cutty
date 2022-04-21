@@ -19,6 +19,7 @@
 #include "draw.h"
 #include "font.h"
 #include "glyph.h"
+#include "canvas.h"
 #include "color.h"
 #include "logger.h"
 #include "app.h"
@@ -55,6 +56,7 @@ cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term, bool test_
     cg->cursor_color = 0x40000000;
     cg->text_lang = "en";
     cg->rscale = 1.0f;
+    cg->flags = cu_cellgrid_background;
 
     cu_typeface_init(cg);
 
@@ -105,9 +107,9 @@ cu_winsize cu_cellgrid_visible(cu_cellgrid *cg)
 }
 
 static cu_winsize draw_loop(cu_cellgrid *cg, int rows, int cols,
-    std::function<void(cu_line &line,size_t k,size_t l,size_t o)> linepre_cb,
-    std::function<void(cu_cell &cell,size_t k,size_t l,size_t i)> cell_cb,
-    std::function<void(cu_line &line,size_t k,size_t l,size_t o)> linepost_cb)
+    std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
+    std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
+    std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
     int wrapline_count = 0;
     bool linewrap = (cg->term->flags & cu_flag_DECAWM) > 0;
@@ -123,12 +125,12 @@ static cu_winsize draw_loop(cu_cellgrid *cg, int rows, int cols,
             if (j != 0) wrapline_count++;
             size_t o = j * cols;
             size_t limit = std::min(o + cols, cellcount);
-            linepre_cb(line, k, l, o);
+            linepre_cb(line, k, l, o, o);
             for (size_t i = o; i < limit; i++) {
                 cu_cell &cell = line.cells[i];
-                cell_cb(cell, k, l, i - o);
+                cell_cb(cell, k, l, o, i);
             }
-            linepost_cb(line, k, l, limit - o);
+            linepost_cb(line, k, l, o, limit);
             l++;
         }
     }
@@ -138,7 +140,7 @@ static cu_winsize draw_loop(cu_cellgrid *cg, int rows, int cols,
     };
 }
 
-cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch)
+cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas)
 {
     text_renderer_ft renderer(cg->manager, cg->rscale);
     std::vector<glyph_shape> shapes;
@@ -152,7 +154,8 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch)
     int clrow = cg->term->cur_row, clcol = cg->term->cur_col;
     float ox = cg->margin, oy = cg->height - cg->margin;
 
-    auto render_block = [&](int row, int col, int h, int w, uint c) {
+    auto render_block = [&](int row, int col, int h, int w, uint c)
+    {
         float u1 = 0.f, v1 = 0.f, u2 = 0.f, v2 = 0.f;
         float x2 = ox + col * cg->fm.advance, x1 = x2 + (cg->fm.advance * w);
         float y1 = oy - row * cg->fm.leading, y2 = y1 - (cg->fm.leading * h);
@@ -164,49 +167,111 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch)
             shader_flat, {o0, o3, o1, o1, o3, o2});
     };
 
-    auto render_text = [&](float x, float y, font_face_ft *face) {
+    auto render_underline = [&](int row, int col, int w, uint fg)
+    {
+        float lw = cg->fm.advance * w, sw = 2.0f;
+        float x1 = ox + col * cg->fm.advance, x2 = x1 + lw;
+        float y = oy - row * cg->fm.leading - (y_offset + cg->fm.underline_position - sw);
+        canvas.set_stroke_width(sw);
+        canvas.set_fill_brush(MVGBrush{MVGBrushNone, { }, { }});
+        canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { color(fg) }});
+        MVGPath *p1 = canvas.new_path({0.0f,0.0f},{lw,sw});
+        p1->pos = { (x1+x2)*0.5f, y };
+        p1->new_line({0.0f,0.0f}, {lw,0.0f});
+    };
+
+    auto render_text = [&](float x, float y, font_face_ft *face)
+    {
         text_segment segment("", cg->text_lang, face, font_size, x, y-y_offset, 0);
         renderer.render(batch, shapes, segment);
         shapes.clear();
     };
 
+    /* emit background */
+    if ((cg->flags & cu_cellgrid_background) > 0) {
+        color white = color(1.0f, 1.0f, 1.0f, 1.0f);
+        color black = color(0.0f, 0.0f, 0.0f, 1.0f);
+        float w = 2.0f, m = cg->margin/2.f + w;
+        float tx = cg->width/2.0f;
+        float ty = cg->height/2.0f;
+        canvas.clear();
+        canvas.set_fill_brush(MVGBrush{MVGBrushSolid, { }, { white }});
+        canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { black }});
+        canvas.set_stroke_width(w);
+        canvas.new_rounded_rectangle(vec2(tx, ty), vec2(tx - m, ty - m), m);
+        canvas.emit(batch);
+    }
+
     /* render background */
 
     cu_winsize dim = draw_loop(cg, rows, cols,
-        [&] (auto line, auto k, auto l, auto o) {},
-        [&] (auto cell, auto k, auto l, auto o) {
+        [&] (auto line, auto k, auto l, auto o, auto i) {},
+        [&] (auto cell, auto k, auto l, auto o, auto i) {
             uint bg = cell_col(cg, cell).bg;
-            render_block(l, o, 1, 1, bg);
+            render_block(l, i-o, 1, 1, bg);
         },
-        [&] (auto line, auto k, auto l, auto o) {}
+        [&] (auto line, auto k, auto l, auto o, auto i) {}
     );
 
     /* render text */
 
     draw_loop(cg, rows, cols,
-        [&] (auto line, auto k, auto l, auto o) {},
-        [&] (auto cell, auto k, auto l, auto o) {
+        [&] (auto line, auto k, auto l, auto o, auto i) {},
+        [&] (auto cell, auto k, auto l, auto o, auto i) {
             font_face_ft *face = cell_font(cg, cell);
             uint glyph = cu_typeface_lookup_glyph(face, cell.codepoint);
             shapes.push_back({
                 glyph, (unsigned)o, 0, 0, advance_x, 0, cell_col(cg, cell).fg
             });
-            render_text(ox + o * cg->fm.advance, oy - l * cg->fm.leading, face);
+            render_text(ox + (i-o) * cg->fm.advance, oy - l * cg->fm.leading, face);
         },
-        [&] (auto line, auto k, auto l, auto o) {}
+        [&] (auto line, auto k, auto l, auto o, auto i) {}
     );
+
+    /* render underline */
+
+    uint lounder;
+    bool under, lunder;
+    uint fg, lfg;
+
+    draw_loop(cg, rows, cols,
+        [&] (auto line, auto k, auto l, auto o, auto i) {
+            lounder = 0;
+            lunder = under = false;
+            lfg = fg = 0;
+        },
+        [&] (auto cell, auto k, auto l, auto o, auto i) {
+            under = (cell.flags & cu_cell_underline) > 0;
+            fg = cell_col(cg, cell).fg;
+            if ((i-o)-lounder > 0 && (under != lunder || fg != lfg)) {
+                if (lunder) render_underline(l, lounder, (i-o)-lounder, lfg);
+            }
+            if (under != lunder || fg != lfg) {
+                if (under) lounder = i-o;
+            }
+            lfg = fg;
+            lunder = under;
+        },
+        [&] (auto line, auto k, auto l, auto o, auto i) {
+            if ((i-o)-lounder > 0) {
+                if (lunder) render_underline(l, lounder, (i-o)-lounder, lfg);
+            }
+        }
+    );
+
+    canvas.emit(batch);
 
     /* render cursor */
 
     if ((cg->term->flags & cu_flag_DECTCEM) > 0) {
         draw_loop(cg, rows, cols,
-            [&] (auto line, auto k, auto l, auto o) {
+            [&] (auto line, auto k, auto l, auto o, auto i) {
                 if (clrow == k && clcol >= o && clcol < o + cols) {
                     render_block(l, clcol - o, 1, 1, cg->cursor_color);
                 }
             },
-            [&] (auto cell, auto k, auto l, auto o) {},
-            [&] (auto line, auto k, auto l, auto o) {}
+            [&] (auto cell, auto k, auto l, auto o, auto i) {},
+            [&] (auto line, auto k, auto l, auto o, auto i) {}
         );
     }
 

@@ -1,5 +1,10 @@
 #pragma once
 
+enum cu_cellgrid_flag
+{
+    cu_cellgrid_background = (1 << 0)
+};
+
 struct cu_cellgrid
 {
     cu_term *term;
@@ -15,6 +20,7 @@ struct cu_cellgrid
     float margin;
     float font_size;
     float rscale;
+    int flags;
 };
 
 cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term,
@@ -22,4 +28,4 @@ cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term,
 
 void cu_cellgrid_init(cu_cellgrid *cg, cu_term *term, font_manager_ft *manager);
 cu_winsize cu_cellgrid_visible(cu_cellgrid *cg);
-cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch);
+cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas);

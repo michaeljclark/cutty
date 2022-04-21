@@ -101,7 +101,7 @@ static void capture_app(int argc, char **argv)
     process = std::unique_ptr<cu_process>(cu_process_new());
     render->set_overlay(overlay_stats);
 
-    render->flags &= ~cu_render_background;
+    cg->flags &= ~cu_cellgrid_background;
     osmesa_init((uint)cg->width, (uint)cg->height);
 
     render->initialize();

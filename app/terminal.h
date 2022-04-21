@@ -34,7 +34,7 @@ enum cu_cell_color
 	cu_cell_color_fg_dfl     = 0xff000000,
 	cu_cell_color_bg_dfl     = 0xffffffff,
 
-	cu_cell_color_nr_black   = 0xff000000,
+	cu_cell_color_nr_black   = 0xff333333,
 	cu_cell_color_nr_red     = 0xff000099,
 	cu_cell_color_nr_green   = 0xff009900,
 	cu_cell_color_nr_yellow  = 0xff00cccc,
@@ -43,7 +43,7 @@ enum cu_cell_color
 	cu_cell_color_nr_cyan    = 0xffcccc00,
 	cu_cell_color_nr_white   = 0xffcccccc,
 
-	cu_cell_color_br_black   = 0xff000000,
+	cu_cell_color_br_black   = 0xff555555,
 	cu_cell_color_br_red     = 0xff0000bb,
 	cu_cell_color_br_green   = 0xff00bb00,
 	cu_cell_color_br_yellow  = 0xff00eeee,
