@@ -530,6 +530,25 @@ static void cu_term_csi_dec3(cu_term *t, uint c)
         char_str(c).c_str(), esc_args(t).c_str());
 }
 
+static void zterm_csi_dsr(cu_term *t)
+{
+    Trace("zterm_csi_dsr: %s\n", esc_args(t).c_str());
+    switch (opt_arg(t, 0, 0)) {
+    case 6: { /* report cursor position */
+        char buf[32];
+        int col = t->cur_col + 1;
+        int row = t->cur_row - (t->lines.size() - t->vis_lines) + 1;
+        row = std::max(1, std::min(row, (int)t->vis_lines));
+        int len = snprintf(buf, sizeof(buf), "\x1b[%u;%uR", row, col);
+        cu_term_write(t, buf, len);
+        break;
+    }
+    default:
+        Debug("zterm_csi_dsr: %s\n", esc_args(t).c_str());
+        break;
+    }
+}
+
 static void cu_term_csi(cu_term *t, uint c)
 {
     Trace("cu_term_csi: %s %s\n",
@@ -708,6 +727,9 @@ static void cu_term_csi(cu_term *t, uint c)
             }
         }
         break;
+    case 'n': /* device status report */
+        zterm_csi_dsr(t);
+        break;
     case 'r': /* set scrolling region {line-start};{line-end}*/
         cu_term_scroll_region(t, opt_arg(t, 0, 1), opt_arg(t, 1, 1));
         break;
@@ -801,8 +823,8 @@ restart:
         case '@': case 'A': case 'B': case 'C': case 'D':
         case 'E': case 'F': case 'G': case 'H': case 'I':
         case 'J': case 'K': case 'L': case 'M': case 'P':
-        case 'm': case 'd': case 'e': case 'f': case 'r':
-        case 't':
+        case 'd': case 'e': case 'f': case 'm': case 'n':
+        case 'r': case 't':
             cu_term_csi(t, c);
             t->state = cu_state_normal;
             break;
@@ -838,8 +860,8 @@ restart:
         case '@': case 'A': case 'B': case 'C': case 'D':
         case 'E': case 'F': case 'G': case 'H': case 'I':
         case 'J': case 'K': case 'L': case 'M': case 'P':
-        case 'm': case 'd': case 'e': case 'f': case 'r':
-        case 't':
+        case 'd': case 'e': case 'f': case 'm': case 'n':
+        case 'r': case 't':
             if (t->argc < array_size(t->argv)) {
                 t->argv[t->argc++] = t->code; t->code = 0;
             } else {
