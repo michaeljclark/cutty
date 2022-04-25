@@ -7,10 +7,9 @@ enum cu_cellgrid_flag
 
 struct cu_cellgrid
 {
-    cu_term *term;
-    font_manager_ft *manager;
     cu_font_metric fm;
     uint cursor_color;
+    uint background_color;
     const char* text_lang;
     font_face *mono1_emoji;
     font_face *mono1_regular;
@@ -21,11 +20,18 @@ struct cu_cellgrid
     float font_size;
     float rscale;
     int flags;
+    ssize_t vdelta;
+
+    virtual ~cu_cellgrid() = default;
+
+    virtual cu_winsize visible() = 0;
+    virtual cu_winsize draw(draw_list &batch) = 0;
+
+    virtual font_manager_ft* get_manager() = 0;
+    virtual cu_term* get_terminal() = 0;
+    virtual MVGCanvas* get_canvas() = 0;
+    virtual ui9::Root* get_root() = 0;
 };
 
 cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term,
                              bool test_mode = false);
-
-void cu_cellgrid_init(cu_cellgrid *cg, cu_term *term, font_manager_ft *manager);
-cu_winsize cu_cellgrid_visible(cu_cellgrid *cg);
-cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas);

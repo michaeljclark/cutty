@@ -107,7 +107,7 @@ static void capture_app(int argc, char **argv)
     render->initialize();
     render->reshape(cg->width, cg->height, 1.f/cg->rscale);
 
-    cu_winsize dim = cu_cellgrid_visible(cg.get());
+    cu_winsize dim = cg->visible();
     cu_term_set_dim(term.get(), dim);
     cu_term_reset(term.get());
 

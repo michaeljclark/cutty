@@ -5,8 +5,6 @@ struct cu_render
 	virtual ~cu_render() = default;
 
 	virtual void set_overlay(bool val) = 0;
-	virtual MVGCanvas* get_canvas() = 0;
-	virtual ui9::Root* get_ui9root() = 0;
 
 	virtual cu_winsize update() = 0;
 	virtual void display() = 0;

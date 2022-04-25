@@ -22,6 +22,8 @@
 #include "canvas.h"
 #include "color.h"
 #include "logger.h"
+#include "file.h"
+#include "ui9.h"
 
 #include "terminal.h"
 #include "cellgrid.h"
@@ -94,20 +96,21 @@ void cu_typeface_print_metrics(font_face *face, cu_font_metric m)
 
 void cu_typeface_init(cu_cellgrid *cg)
 {
+    font_manager_ft *manager = cg->get_manager();
     /*
      * we need to scan font directory for caching to work, as it uses
      * font ids assigned during scanning. this also means that if the
      * font directory has changed, then cached font ids will be wrong
      */
-    if (cg->manager->msdf_enabled) {
-        cg->manager->scanFontDir("fonts");
+    if (manager->msdf_enabled) {
+        manager->scanFontDir("fonts");
     }
 
     /* fetch our sans font */
-    cg->mono1_emoji = cg->manager->findFontByPath(mono1_emoji_font_path);
+    cg->mono1_emoji = manager->findFontByPath(mono1_emoji_font_path);
     cg->mono1_emoji->flags |= font_face_color;
-    cg->mono1_regular = cg->manager->findFontByPath(mono1_regular_font_path);
-    cg->mono1_bold = cg->manager->findFontByPath(mono1_bold_font_path);
+    cg->mono1_regular = manager->findFontByPath(mono1_regular_font_path);
+    cg->mono1_bold = manager->findFontByPath(mono1_bold_font_path);
 
     /* measure font */
     cg->fm = cu_typeface_get_metrics(cg->mono1_regular, cg->font_size, 'M');

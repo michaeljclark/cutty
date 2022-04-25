@@ -193,6 +193,7 @@ void cu_line::clear()
 
 static void cu_term_set_row(cu_term *t, int row)
 {
+    if (row < 0) row = 0;
     if (row != t->cur_row) {
         t->lines[t->cur_row].pack();
         if (row >= t->lines.size()) {
@@ -206,25 +207,9 @@ static void cu_term_set_row(cu_term *t, int row)
 
 static void cu_term_set_col(cu_term *t, int col)
 {
+    if (col < 0) col = 0;
     if (col != t->cur_col) {
         t->cur_col = col;
-    }
-}
-
-static void cu_term_resize(cu_term *t)
-{
-    /* make sure there as enough lines to encompass the current row */
-    if (t->cur_row >= t->lines.size()) {
-        t->lines.resize(t->cur_row + 1);
-    }
-
-    /* make sure there are as many physical lines as visible lines */
-    if (t->lines.size() < t->vis_lines) {
-        size_t new_rows = t->vis_lines - t->lines.size();
-        for (size_t i = 0; i < new_rows; i++) {
-            t->lines.insert(t->lines.begin(),cu_line{});
-        }
-        cu_term_set_row(t, t->cur_row + new_rows);
     }
 }
 
@@ -232,7 +217,6 @@ static void cu_term_move_abs(cu_term *t, int row, int col)
 {
     Trace("cu_term_move_abs: %d %d\n", row, col);
     if (row != -1) {
-        cu_term_resize(t);
         size_t new_row = std::max(size_t(0), std::min(t->lines.size() - 1,
                                   t->lines.size() - t->vis_lines + row - 1));
         cu_term_set_row(t, new_row);
@@ -249,9 +233,6 @@ static void cu_term_move_rel(cu_term *t, int row, int col)
     int new_col = col == cu_term_col_home ? 0 : t->cur_col + col;
     if (new_row < 0) new_row = 0;
     if (new_col < 0) new_col = 0;
-    if (new_row >= t->lines.size()) {
-        t->lines.resize(new_row + 1);
-    }
     cu_term_set_row(t, new_row);
     cu_term_set_col(t, new_col);
 }
@@ -277,6 +258,8 @@ void cu_term_set_fd(cu_term *t, int fd)
 
 void cu_term_set_dim(cu_term *t, cu_winsize d)
 {
+    Trace("cu_term_set_dim: vis_lines=%d vis_rows=%d vis_cols=%d\n",
+        d.vis_lines, d.vis_rows, d.vis_cols);
     t->vis_lines = d.vis_lines;
     t->vis_rows = d.vis_rows;
     t->vis_cols = d.vis_cols;
@@ -292,23 +275,26 @@ void cu_term_reset(cu_term *t)
 static void cu_term_erase_screen(cu_term *t, uint arg)
 {
     Trace("cu_term_erase_screen: %d\n", arg);
-    cu_term_resize(t);
     switch (arg) {
     case cu_term_clear_end:
         for (size_t row = t->cur_row; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
+        // todo - recompute vis_lines
         break;
     case cu_term_clear_start:
         for (size_t row = t->cur_row + 1; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
+        // todo - recompute vis_lines
         break;
     case cu_term_clear_all:
         for (size_t row = 0; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
         cu_term_move_abs(t, 1, 1);
+        // vis_lines == vis_rows
+        t->vis_lines = t->vis_rows;
         break;
     }
 }
@@ -321,6 +307,7 @@ static void cu_term_erase_line(cu_term *t, uint arg)
         if (t->cur_col < t->lines[t->cur_row].cells.size()) {
             t->lines[t->cur_row].cells.resize(t->cur_col);
         }
+        // todo - recompute vis_lines
         break;
     case cu_term_clear_start:
         if (t->cur_col < t->lines[t->cur_row].cells.size()) {
@@ -330,9 +317,11 @@ static void cu_term_erase_line(cu_term *t, uint arg)
                 t->lines[t->cur_row].cells[col] = cell;
             }
         }
+        // todo - recompute vis_lines
         break;
     case cu_term_clear_all:
         t->lines[t->cur_row].cells.resize(0);
+        // todo - recompute vis_lines
         break;
     }
 }

@@ -24,14 +24,14 @@
 #include "color.h"
 #include "logger.h"
 #include "file.h"
-#include "format.h"
+#include "ui9.h"
 #include "app.h"
 
-#include "ui9.h"
 #include "terminal.h"
 #include "process.h"
 #include "cellgrid.h"
 #include "render.h"
+//#include "ui.h"
 
 using namespace std::chrono;
 
@@ -83,9 +83,9 @@ static bool mouse_button_ui9(int button, int action, int mods, vec3 pos)
     case GLFW_PRESS:   q = ui9::pressed;  break;
     case GLFW_RELEASE: q = ui9::released; break;
     }
-    vec3 v = render->get_canvas()->get_inverse_transform() * pos;
+    vec3 v = cg->get_canvas()->get_inverse_transform() * pos;
     ui9::MouseEvent evt{{ui9::mouse, q}, b, v};
-    return render->get_ui9root()->dispatch(&evt.header);
+    return cg->get_root()->dispatch(&evt.header);
 }
 
 static void mouse_button(GLFWwindow* window, int button, int action, int mods)
@@ -97,9 +97,9 @@ static void mouse_button(GLFWwindow* window, int button, int action, int mods)
 
 static bool mouse_motion_ui9(vec3 pos)
 {
-    vec3 v = render->get_canvas()->get_inverse_transform() * pos;
+    vec3 v = cg->get_canvas()->get_inverse_transform() * pos;
     ui9::MouseEvent evt{{ui9::mouse, ui9::motion}, b, v};
-    return render->get_ui9root()->dispatch(&evt.header);
+    return cg->get_root()->dispatch(&evt.header);
 }
 
 static void cursor_position(GLFWwindow* window, double xpos, double ypos)
@@ -107,6 +107,7 @@ static void cursor_position(GLFWwindow* window, double xpos, double ypos)
     mouse_pos = vec2(xpos, ypos);
 
     if (mouse_motion_ui9(vec3(mouse_pos, 1))) {
+        term->needs_update = 1;
         return;
     }
 }
@@ -128,9 +129,12 @@ static void reshape()
 
 static void framebuffer_size(GLFWwindow* window, int w, int h)
 {
-    cg->term->needs_update++;
+    term->needs_update = 1;
     reshape();
-    process->winsize(render->update());
+    cu_winsize dim = render->update();
+    if (process->winsize(dim)) {
+        cu_term_set_dim(term.get(), dim);
+    }
     render->display();
     glfwSwapBuffers(window);
 }
@@ -180,7 +184,7 @@ static void cu_term_app(int argc, char **argv)
     render->initialize();
     reshape();
 
-    cu_winsize dim = cu_cellgrid_visible(cg.get());
+    cu_winsize dim = cg->visible();
     cu_term_set_dim(term.get(), dim);
     cu_term_reset(term.get());
 
@@ -188,7 +192,10 @@ static void cu_term_app(int argc, char **argv)
     cu_term_set_fd(term.get(), fd);
 
     while (!glfwWindowShouldClose(window)) {
-        process->winsize(render->update());
+        cu_winsize dim = render->update();
+        if (process->winsize(dim)) {
+            cu_term_set_dim(term.get(), dim);
+        }
         render->display();
         glfwSwapBuffers(window);
         glfwPollEvents();

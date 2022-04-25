@@ -783,12 +783,18 @@ MVGRect* MVGCanvas::new_rounded_rectangle(vec2 pos, vec2 half_size, float radius
 
 void MVGCanvas::emit(draw_list &batch)
 {
+    std::vector<MVGDrawable*> sorted_objects;
     for (size_t i = emitted_index; i < objects.size(); i++) {
-        auto &o = objects[i];
-        if (!o->visible) continue;
-        switch (o->drawable_type) {
+        sorted_objects.push_back(objects[i].get());
+    }
+    std::stable_sort(sorted_objects.begin(), sorted_objects.end(),
+        [](const MVGDrawable* a, const MVGDrawable* b) -> bool { return a->z < b->z; });
+
+    for (auto obj : sorted_objects) {
+        if (!obj->visible) continue;
+        switch (obj->drawable_type) {
         case drawable_patch: {
-            auto shape = static_cast<MVGPatch*>(o.get());
+            auto shape = static_cast<MVGPatch*>(obj);
             int fill_brush_num = get_brush_num(shape->fill_brush);
             int stroke_brush_num = get_brush_num(shape->stroke_brush);
 
@@ -817,12 +823,12 @@ void MVGCanvas::emit(draw_list &batch)
             uint32_t c = 0xffffffff;
             rect(batch, tbo_iid,
                 pos - halfSize - padding, pos + halfSize + padding,
-                shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
-                (float)o->ll_shape_num, transform);
+                -shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
+                (float)obj->ll_shape_num, transform);
             break;
         }
         case drawable_path: {
-            auto shape = static_cast<MVGPath*>(o.get());
+            auto shape = static_cast<MVGPath*>(obj);
             int fill_brush_num = get_brush_num(shape->fill_brush);
             int stroke_brush_num = get_brush_num(shape->stroke_brush);
 
@@ -851,12 +857,12 @@ void MVGCanvas::emit(draw_list &batch)
             uint32_t c = 0xffffffff;
             rect(batch, tbo_iid,
                 pos - halfSize - padding, pos + halfSize + padding,
-                shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
-                (float)o->ll_shape_num, transform);
+                -shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
+                (float)obj->ll_shape_num, transform);
             break;
         }
         case drawable_text: {
-            auto shape = static_cast<MVGText*>(o.get());
+            auto shape = static_cast<MVGText*>(obj);
             size_t s = glyph_map.size();
             text_segment &segment = shape->get_text_segment();
             std::vector<glyph_shape> &shapes = shape->get_glyph_shapes();
@@ -881,7 +887,7 @@ void MVGCanvas::emit(draw_list &batch)
             break;
         }
         case drawable_circle: {
-            auto shape = static_cast<MVGCircle*>(o.get());
+            auto shape = static_cast<MVGCircle*>(obj);
             int fill_brush_num = get_brush_num(shape->fill_brush);
             int stroke_brush_num = get_brush_num(shape->stroke_brush);
 
@@ -898,12 +904,12 @@ void MVGCanvas::emit(draw_list &batch)
             uint32_t c = 0xffffffff;
             rect(batch, tbo_iid,
                 pos - radius - padding, pos + radius + padding,
-                shape->get_z(), -vec2(padding), vec2(radius) * 2.0f + padding, c,
-                (float)o->ll_shape_num, transform);
+                -shape->get_z(), -vec2(padding), vec2(radius) * 2.0f + padding, c,
+                (float)obj->ll_shape_num, transform);
             break;
         }
         case drawable_ellipse: {
-            auto shape = static_cast<MVGEllipse*>(o.get());
+            auto shape = static_cast<MVGEllipse*>(obj);
             int fill_brush_num = get_brush_num(shape->fill_brush);
             int stroke_brush_num = get_brush_num(shape->stroke_brush);
 
@@ -920,12 +926,12 @@ void MVGCanvas::emit(draw_list &batch)
             uint32_t c = 0xffffffff;
             rect(batch, tbo_iid,
                 pos - halfSize - padding, pos + halfSize + padding,
-                shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
-                (float)o->ll_shape_num, transform);
+                -shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
+                (float)obj->ll_shape_num, transform);
             break;
         }
         case drawable_rectangle: {
-            auto shape = static_cast<MVGRect*>(o.get());
+            auto shape = static_cast<MVGRect*>(obj);
             int fill_brush_num = get_brush_num(shape->fill_brush);
             int stroke_brush_num = get_brush_num(shape->stroke_brush);
 
@@ -944,8 +950,8 @@ void MVGCanvas::emit(draw_list &batch)
             uint32_t c = 0xffffffff;
             rect(batch, tbo_iid,
                 pos - halfSize - padding, pos + halfSize + padding,
-                shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
-                (float)o->ll_shape_num, transform);
+                -shape->get_z(), -vec2(padding), halfSize * 2.0f + padding, c,
+                (float)obj->ll_shape_num, transform);
             break;
         }
         }

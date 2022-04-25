@@ -23,11 +23,11 @@
 #include "canvas.h"
 #include "color.h"
 #include "logger.h"
-#include "file.h"
 #include "format.h"
+#include "file.h"
+#include "ui9.h"
 #include "app.h"
 
-#include "ui9.h"
 #include "terminal.h"
 #include "process.h"
 #include "cellgrid.h"
@@ -54,17 +54,14 @@ struct cu_render_opengl : cu_render
 	std::map<int,GLuint> tex_map;
 	draw_list batch;
 	mat4 mvp;
-	AContext ctx;
-	ui9::Root root;
-	MVGCanvas canvas;
+	//AContext ctx;
+	//MVGCanvas canvas;
 	bool overlay_stats;
 
 	cu_render_opengl(font_manager_ft *manager, cu_cellgrid *cg);
 	virtual ~cu_render_opengl();
 
 	virtual void set_overlay(bool val);
-	virtual MVGCanvas* get_canvas();
-	virtual ui9::Root* get_ui9root();
 
 	virtual cu_winsize update();
 	virtual void display();
@@ -72,6 +69,7 @@ struct cu_render_opengl : cu_render
 	virtual void initialize();
 
 protected:
+    void create_layout();
 	program* cmd_shader_gl(int cmd_shader);
 	std::vector<std::string> get_stats();
 	void render_stats(draw_list &batch);
@@ -83,8 +81,8 @@ cu_render_opengl::cu_render_opengl(font_manager_ft *manager, cu_cellgrid *cg)
   shape_tb(), edge_tb(), brush_tb(),
   prog_flat(), prog_texture(), prog_msdf(), prog_canvas(),
   vao(0), vbo(0), ibo(0),
-  tex_map(), batch(), mvp{}, ctx{},
-  root(manager), canvas(manager),
+  tex_map(), batch(), mvp{}, //ctx{},
+  //canvas(manager), /* ui(manager, &canvas), */
   overlay_stats(false) {}
 
 cu_render_opengl::~cu_render_opengl() {}
@@ -120,8 +118,6 @@ static long circular_buffer_average(circular_buffer *buffer)
 }
 
 void cu_render_opengl::set_overlay(bool val) { overlay_stats = val; }
-MVGCanvas* cu_render_opengl::get_canvas() { return &canvas; }
-ui9::Root* cu_render_opengl::get_ui9root() { return &root; }
 
 std::vector<std::string> cu_render_opengl::get_stats()
 {
@@ -158,7 +154,7 @@ cu_winsize cu_render_opengl::update()
 {
     static ullong tl, tn;
 
-    if (!cg->term->needs_update) return dim;
+    if (!cg->get_terminal()->needs_update) return dim;
 
     auto now = high_resolution_clock::now();
     tn = duration_cast<nanoseconds>(now.time_since_epoch()).count();
@@ -168,16 +164,8 @@ cu_winsize cu_render_opengl::update()
     /* start frame with empty draw list */
     draw_list_clear(batch);
 
-    /* set up scale/translate matrix */
-    float s = 1.0f;
-    float tx = cg->width/2.0f;
-    float ty = cg->height/2.0f;
-    canvas.set_transform(mat3(s,  0,  0,
-                              0,  s,  0,
-                              0,  0,  1));
-    canvas.set_scale(cg->rscale);
-
-    dim = cu_cellgrid_draw(cg, batch, canvas);
+    /* draw terminal cellgrid */
+    dim = cg->draw(batch);
 
     /* render stats text */
     if (overlay_stats) {
@@ -185,15 +173,15 @@ cu_winsize cu_render_opengl::update()
     }
 
     /* synchronize canvas texture buffers */
-    buffer_texture_create(shape_tb, canvas.ctx->shapes, GL_TEXTURE0, GL_R32F);
-    buffer_texture_create(edge_tb, canvas.ctx->edges, GL_TEXTURE1, GL_R32F);
-    buffer_texture_create(brush_tb, canvas.ctx->brushes, GL_TEXTURE2, GL_R32F);
+    buffer_texture_create(shape_tb, cg->get_canvas()->ctx->shapes, GL_TEXTURE0, GL_R32F);
+    buffer_texture_create(edge_tb, cg->get_canvas()->ctx->edges, GL_TEXTURE1, GL_R32F);
+    buffer_texture_create(brush_tb, cg->get_canvas()->ctx->brushes, GL_TEXTURE2, GL_R32F);
 
     /* update vertex and index buffers arrays (idempotent) */
     vertex_buffer_create("vbo", &vbo, GL_ARRAY_BUFFER, batch.vertices);
     vertex_buffer_create("ibo", &ibo, GL_ELEMENT_ARRAY_BUFFER, batch.indices);
 
-    cg->term->needs_update = 0;
+    cg->get_terminal()->needs_update = 0;
 
     return dim;
 }
@@ -212,7 +200,8 @@ program* cu_render_opengl::cmd_shader_gl(int cmd_shader)
 void cu_render_opengl::display()
 {
     /* okay, lets send commands to the GPU */
-    glClearColor(0.9f, 0.9f, 0.9f, 1.0f);
+    color bg(cg->background_color);
+    glClearColor(bg.r, bg.g, bg.b, bg.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     /* draw list batch with tbo_iid canvas texture buffer special case */

@@ -612,11 +612,8 @@ struct Visible
     /* get_assigned_size returns size assigned during layout */
     virtual vec3 get_assigned_size() { return assigned_size; }
 
-    /* override to initialize */
-    virtual void init(MVGCanvas *c) {};
-
     /* override to implement custom layout */
-    virtual void layout(MVGCanvas *c) { valid = true; };
+    virtual void layout(MVGCanvas *c) { };
 
     /* override to intercept events */
     virtual bool dispatch(Event *e) { return false; };
@@ -631,13 +628,6 @@ struct Container : Visible
 
     virtual bool has_children() { return children.size() > 0; }
 
-    virtual void init(MVGCanvas *c)
-    {
-        for (auto &o : children) {
-            o->init(c);
-        }
-    }
-
     virtual void layout(MVGCanvas *c)
     {
         for (auto &o : children) {
@@ -649,7 +639,7 @@ struct Container : Visible
     {
         bool ret = false;
         for (auto ci = children.rbegin(); ci != children.rend(); ci++) {
-            if ((ret = (*ci)->dispatch(e))) break;
+            if ((*ci)->is_visible() && (ret = (*ci)->dispatch(e))) break;
         }
         return ret;
     }
@@ -699,24 +689,15 @@ struct Root : Container
     virtual void grant_size(vec3 size)
     {
         for (size_t i = 0; i < children.size(); i++) {
-            vec3 current_size = children[i]->get_current_size();
-            if (current_size.x == 0 && current_size.y == 0) {
-                current_size = sizes[i].preferred;
-                children[i]->set_current_size(current_size);
-            }
-            children[i]->grant_size(current_size);
+            vec3 preferred_size = children[i]->get_preferred_size();
+            children[i]->grant_size(preferred_size);
         }
     }
 
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) {
-            return;
-        }
-        Container::init(c);
         grant_size(Container::calc_size().preferred);
         Container::layout(c);
-        valid = true;
     }
 
 };
@@ -726,8 +707,6 @@ struct Frame : Container
     std::string text;
     float click_radius;
 
-    MVGRect *rect;
-    MVGText *label;
     vec2 scale;
     vec3 delta;
     vec3 orig_size;
@@ -736,8 +715,6 @@ struct Frame : Container
 
     Frame() :
         Container("Frame"),
-        rect(nullptr),
-        label(nullptr),
         delta(0),
         orig_size(0),
         _in_title(false),
@@ -761,14 +738,9 @@ struct Frame : Container
 
     virtual Sizing calc_size()
     {
-        assert(label);
-
-        label->set_text(text);
-        label->set_size(font_size);
-        label->set_face(get_font_face());
-
-        scale = label->get_text_size() * vec2(1.0f, text_leading);
         Sizing cs = has_children() ? children[0]->calc_size() : Sizing();
+
+        scale = vec2(font_size * text.size(), font_size * 2.f);
 
         vec3 min = p() + b() + m() +
             vec3(std::max(scale.x, cs.minimum.x), scale.y + cs.minimum.y, 0);
@@ -797,21 +769,8 @@ struct Frame : Container
         }
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        if (!rect) {
-            rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
-        }
-        if (!label) {
-            label = c->new_text();
-        }
-        Container::init(c);
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         MVGBrush fill_brush{MVGBrushSolid, {}, { fill_color }};
         MVGBrush stroke_brush{MVGBrushSolid, {}, { stroke_color }};
         MVGBrush text_brush{MVGBrushSolid, {}, { text_color }};
@@ -819,6 +778,7 @@ struct Frame : Container
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
 
+        MVGRect *rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
         rect->pos = position;
         rect->set_origin(vec2(half_size));
         rect->set_halfsize(vec2(half_size));
@@ -828,6 +788,7 @@ struct Frame : Container
         rect->set_stroke_brush(stroke_brush);
         rect->set_stroke_width(border[0]);
 
+        MVGText *label = c->new_text();
         label->pos = position + vec3(0.0f,-half_size.y + scale.y/2.0f,0);
         label->set_text(text);
         label->set_size(font_size);
@@ -844,8 +805,6 @@ struct Frame : Container
         }
 
         Container::layout(c);
-
-        valid = true;
     }
 
     virtual bool dispatch(Event *e)
@@ -862,7 +821,7 @@ struct Frame : Container
 
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
-        vec3 frame_dist = me->pos - vec3(rect->pos,0);
+        vec3 frame_dist = me->pos - position;
 
         bool in_title = frame_dist.x >= -half_size.x && frame_dist.x <= half_size.x &&
                         frame_dist.y >= -half_size.y && frame_dist.y <= half_size.y;
@@ -888,7 +847,7 @@ struct Frame : Container
         if (_in_corner) {
             /* todo - edge resize */
             /* todo - scale relative to opposite corner versus center */
-            vec3 d = me->pos - delta - vec3(rect->pos,0);
+            vec3 d = me->pos - delta - position;
             d *= vec3(1.0f - std::signbit(frame_dist.x) * 2.0f,
                       1.0f - std::signbit(frame_dist.y) * 2.0f, 1);
             if (std::signbit(frame_dist.x) == std::signbit(delta.x) &&
@@ -1268,15 +1227,8 @@ struct Grid : Container
         }
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        Container::init(c);
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         /* gather column positions */
         float x = 0;
         std::vector<float> col_pos(cols_count);
@@ -1313,8 +1265,6 @@ struct Grid : Container
         }
 
         Container::layout(c);
-
-        valid = true;
     }
 };
 
@@ -1322,14 +1272,8 @@ struct Label : Visible
 {
     std::string text;
 
-    MVGRect *rect;
-    MVGText *label;
-    vec2 scale;
-
     Label() :
-        Visible("Label"),
-        rect(nullptr),
-        label(nullptr)
+        Visible("Label")
     {
         load_properties();
     }
@@ -1339,14 +1283,8 @@ struct Label : Visible
 
     virtual Sizing calc_size()
     {
-        assert(label);
-
-        label->set_text(text);
-        label->set_size(font_size);
-        label->set_face(get_font_face());
-
-        scale = label->get_text_size() * vec2(1.0f,text_leading);
-        vec3 sz = p() + b() + m() + vec3(scale, 0);
+        // label->get_text_size() * vec2(1.0f,text_leading);
+        vec3 sz = p() + b() + m() + vec3(font_size * text.size(), font_size * 2.f, 0);
 
         Sizing s = {
             vec3(std::max(sz.x, get_default_size().x),
@@ -1361,20 +1299,8 @@ struct Label : Visible
         return (last_sizing = s);
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        if (!rect) {
-            rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
-        }
-        if (!label) {
-            label = c->new_text();
-        }
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         MVGBrush fill_brush{MVGBrushSolid, {}, { fill_color }};
         MVGBrush stroke_brush{MVGBrushSolid, {}, { stroke_color }};
         MVGBrush text_brush{MVGBrushSolid, {}, { text_color }};
@@ -1382,6 +1308,7 @@ struct Label : Visible
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
 
+        MVGRect *rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
         rect->pos = position;
         rect->set_origin(vec2(half_size));
         rect->set_halfsize(vec2(half_size));
@@ -1391,6 +1318,7 @@ struct Label : Visible
         rect->set_stroke_brush(stroke_brush);
         rect->set_stroke_width(border[0]);
 
+        MVGText *label = c->new_text();
         label->pos = position;
         label->set_text(text);
         label->set_size(font_size);
@@ -1401,8 +1329,6 @@ struct Label : Visible
         label->set_halign(text_halign_center);
         label->set_valign(text_valign_center);
         label->set_visible(visible);
-
-        valid = true;
     }
 };
 
@@ -1410,14 +1336,8 @@ struct Button : Visible
 {
     std::string text;
 
-    MVGRect *rect;
-    MVGText *label;
-    vec2 scale;
-
     Button() :
-        Visible("Button"),
-        rect(nullptr),
-        label(nullptr)
+        Visible("Button")
     {
         load_properties();
     }
@@ -1427,14 +1347,8 @@ struct Button : Visible
 
     virtual Sizing calc_size()
     {
-        assert(label);
-
-        label->set_text(text);
-        label->set_size(font_size);
-        label->set_face(get_font_face());
-
-        scale = label->get_text_size() * vec2(1.0f,text_leading);
-        vec3 sz = p() + b() + m() + vec3(scale, 0);
+        // label->get_text_size() * vec2(1.0f,text_leading);
+        vec3 sz = p() + b() + m() + vec3(font_size * text.size(), font_size * 2.f, 0);
 
         Sizing s = {
             vec3(std::max(sz.x, get_minimum_size().x),
@@ -1449,20 +1363,8 @@ struct Button : Visible
         return (last_sizing = s);
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        if (!rect) {
-            rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
-        }
-        if (!label) {
-            label = c->new_text();
-        }
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         MVGBrush fill_brush{MVGBrushSolid, {}, { fill_color }};
         MVGBrush stroke_brush{MVGBrushSolid, {}, { stroke_color }};
         MVGBrush text_brush{MVGBrushSolid, {}, { text_color }};
@@ -1470,6 +1372,7 @@ struct Button : Visible
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
 
+        MVGRect *rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
         rect->pos = position;
         rect->set_origin(vec2(half_size));
         rect->set_halfsize(vec2(half_size));
@@ -1479,6 +1382,7 @@ struct Button : Visible
         rect->set_stroke_brush(stroke_brush);
         rect->set_stroke_width(border[0]);
 
+        MVGText *label = c->new_text();
         label->pos = position;
         label->set_text(text);
         label->set_size(font_size);
@@ -1489,8 +1393,6 @@ struct Button : Visible
         label->set_halign(text_halign_center);
         label->set_valign(text_valign_center);
         label->set_visible(visible);
-
-        valid = true;
     }
 
     virtual bool dispatch(Event *e)
@@ -1508,17 +1410,12 @@ struct Slider : Visible
     std::function<void(float)> callback;
     bool inside;
 
-    MVGRect *rect;
-    MVGCircle *circle;
-
     Slider() :
         Visible("Slider"),
         axis(horizontal),
         value(0.0f),
         callback(),
-        inside(false),
-        rect(nullptr),
-        circle(nullptr)
+        inside(false)
     {
         load_properties();
     }
@@ -1569,20 +1466,8 @@ struct Slider : Visible
         return (last_sizing = s);
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        if (!rect) {
-            rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
-        }
-        if (!circle) {
-            circle = c->new_circle(vec2(0),0);
-        }
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         MVGBrush fill_brush{MVGBrushSolid, {}, { fill_color }};
         MVGBrush stroke_brush{MVGBrushSolid, {}, { stroke_color }};
         MVGBrush text_brush{MVGBrushSolid, {}, { text_color }};
@@ -1590,6 +1475,7 @@ struct Slider : Visible
         vec3 size_remaining = assigned_size - m() - b() - p();
         vec3 half_size = size_remaining / 2.0f;
 
+        MVGRect *rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
         rect->pos = position;
         rect->set_radius(border_radius);
         rect->set_visible(visible);
@@ -1597,6 +1483,7 @@ struct Slider : Visible
         rect->set_stroke_brush(stroke_brush);
         rect->set_stroke_width(border[0]);
 
+        MVGCircle *circle = c->new_circle(vec2(0),0);
         circle->set_origin(vec2(control_size));
         circle->set_radius(control_size);
         circle->set_visible(visible);
@@ -1617,8 +1504,6 @@ struct Slider : Visible
             rect->set_halfsize(vec2(bar_thickness/2.0f, half_size.y));
             circle->pos = position + vec3(0, control_offset, 0);
         }
-
-        valid = true;
     }
 
     virtual bool dispatch(Event *e)
@@ -1631,9 +1516,17 @@ struct Slider : Visible
 
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
-        vec3 bar_dist = me->pos - vec3(rect->pos,0);
+        vec3 bar_dist = me->pos - position;
         float bar_offset = bar_thickness/2.0f + border[0];
-        float control_dist = glm::distance(vec3(circle->pos,0), me->pos);
+        float control_dist = 0;
+        if (axis == horizontal) {
+            float control_offset = -half_size.x + size_remaining.x * value;
+            control_dist = glm::distance(position + vec3(control_offset, 0, 0), me->pos);
+        }
+        if (axis == vertical) {
+            float control_offset = -half_size.y + size_remaining.y * (1.0f - value);
+            control_dist = glm::distance(position + vec3(0, control_offset, 0), me->pos);
+        }
         bool in_control = control_dist < (control_size + border[0]);
 
         float new_value = 0.0f;
@@ -1677,16 +1570,11 @@ struct Switch : Visible
     std::function<void(bool)> callback;
     bool inside;
 
-    MVGRect *rect;
-    MVGCircle *circle;
-
     Switch() :
         Visible("Switch"),
         value(false),
         callback(),
-        inside(false),
-        rect(nullptr),
-        circle(nullptr)
+        inside(false)
     {
         load_properties();
     }
@@ -1741,20 +1629,8 @@ struct Switch : Visible
         return (last_sizing = s);
     }
 
-    virtual void init(MVGCanvas *c)
-    {
-        if (!rect) {
-            rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
-        }
-        if (!circle) {
-            circle = c->new_circle(vec2(0),0);
-        }
-    }
-
     virtual void layout(MVGCanvas *c)
     {
-        if (valid) return;
-
         MVGBrush fill_brush{MVGBrushSolid, {}, { fill_color }};
         MVGBrush active_brush{MVGBrushSolid, {}, { active_color }};
         MVGBrush inactive_brush{MVGBrushSolid, {}, { inactive_color }};
@@ -1764,6 +1640,7 @@ struct Switch : Visible
         vec3 size_remaining = assigned_size - m() - b() - p();
         vec3 half_size = size_remaining / 2.0f;
 
+        MVGRect *rect = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
         rect->pos = position -half_size + vec3(control_size.x,half_size.y,0);
         rect->set_origin(control_size);
         rect->set_halfsize(control_size);
@@ -1773,6 +1650,7 @@ struct Switch : Visible
         rect->set_stroke_brush(stroke_brush);
         rect->set_stroke_width(border[0]);
 
+        MVGCircle *circle = c->new_circle(vec2(0),0);
         circle->pos = position -half_size +
             vec3(control_size.x, half_size.y, 0) *
             vec3(value ? 1.5f : 0.5f, 1, 1);
@@ -1782,8 +1660,6 @@ struct Switch : Visible
         circle->set_fill_brush(fill_brush);
         circle->set_stroke_brush(stroke_brush);
         circle->set_stroke_width(border[0]);
-
-        valid = true;
     }
 
     virtual bool dispatch(Event *e)
@@ -1797,7 +1673,7 @@ struct Switch : Visible
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
 
-        vec3 ctrl_dist = me->pos - vec3(rect->pos,0);
+        vec3 ctrl_dist = me->pos - position -half_size + vec3(control_size.x,half_size.y,0);
         bool in_control =
             ctrl_dist.y >= -control_size.y && ctrl_dist.y <= control_size.y &&
             ctrl_dist.x >= -control_size.x && ctrl_dist.x <= control_size.x;
@@ -1813,6 +1689,186 @@ struct Switch : Visible
         if (e->qualifier == released && inside) {
             inside = false;
             set_value(!value);
+        }
+
+        return inside;
+    }
+};
+
+struct Scroller : Visible
+{
+    axis_2D axis;
+    float bar_length;
+    float bar_radius;
+    float bar_thickness;
+    color bar_color;
+    float gutter_radius;
+    float gutter_thickness;
+    color gutter_color;
+    float value;
+    std::function<void(float)> callback;
+    bool inside;
+
+    Scroller() :
+        Visible("Scroller"),
+        axis(horizontal),
+        value(0.f),
+        callback(),
+        inside(false)
+    {
+        load_properties();
+    }
+
+    virtual void load_properties()
+    {
+        Visible::load_properties();
+        Defaults *d = get_defaults();
+        set_bar_length(d->get_float(class_name, "bar-length", 20.0f));
+        set_bar_radius(d->get_float(class_name, "bar-radius", 2.5f));
+        set_bar_thickness(d->get_float(class_name, "bar-thickness", 5.0f));
+        set_bar_color(d->get_color(class_name, "bar-color", color(0.5f,0.5f,0.5f,1.f)));
+        set_gutter_radius(d->get_float(class_name, "gutter-radius", 2.5f));
+        set_gutter_thickness(d->get_float(class_name, "gutter-thickness", 5.0f));
+        set_gutter_color(d->get_color(class_name, "gutter-color", color(0.95f,0.95f,0.95f,1.f)));
+    }
+
+    virtual axis_2D get_orientation() { return axis; }
+    virtual void set_orientation(axis_2D v) { axis = v; invalidate(); }
+    virtual float get_bar_length() { return bar_length; }
+    virtual void set_bar_length(float v) { bar_length = v; invalidate(); }
+    virtual float get_bar_radius() { return bar_radius; }
+    virtual void set_bar_radius(float v) { bar_radius = v; invalidate(); }
+    virtual float get_bar_thickness() { return bar_thickness; }
+    virtual void set_bar_thickness(float v) { bar_thickness = v; invalidate(); }
+    virtual color get_bar_color() { return bar_color; }
+    virtual void set_bar_color(color v) { bar_color = v; invalidate(); }
+    virtual float get_gutter_radius() { return gutter_radius; }
+    virtual void set_gutter_radius(float v) { gutter_radius = v; invalidate(); }
+    virtual float get_gutter_thickness() { return gutter_thickness; }
+    virtual void set_gutter_thickness(float v) { gutter_thickness = v; invalidate(); }
+    virtual color get_gutter_color() { return gutter_color; }
+    virtual void set_gutter_color(color v) { gutter_color = v; invalidate(); }
+    virtual float get_value() { return value; }
+    virtual std::function<void(float)> get_callback() { return callback; }
+    virtual void set_callback(std::function<void(float)> cb) { callback = cb; }
+
+    virtual void set_value(float v)
+    {
+        if (v == value) {
+            return;
+        }
+        value = v;
+        invalidate();
+        if (callback) {
+            callback(value);
+        }
+    }
+
+    virtual Sizing calc_size()
+    {
+        vec3 gutter_size = vec3(vec2(get_gutter_thickness()), 0) +
+            m() + b() + p();
+        vec3 min_size = vec3( std::max(minimum_size.x,gutter_size.x),
+                              std::max(minimum_size.y,gutter_size.y),
+                              std::max(minimum_size.z,gutter_size.z) );
+        vec3 pref_size = vec3( std::max(preferred_size.x,min_size.x),
+                               std::max(preferred_size.y,min_size.y),
+                               std::max(preferred_size.z,min_size.z) );
+        Sizing s = { min_size, pref_size };
+        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Scroller",
+            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        return (last_sizing = s);
+    }
+
+    virtual void layout(MVGCanvas *c)
+    {
+        MVGBrush bar_brush{MVGBrushSolid, {}, { bar_color }};
+        MVGBrush gutter_brush{MVGBrushSolid, {}, { gutter_color }};
+
+        vec3 size_remaining = assigned_size - m() - b() - p();
+        vec3 half_size = size_remaining / 2.0f;
+
+        MVGRect *gutter = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
+        gutter->pos = position;
+        gutter->set_radius(gutter_radius);
+        gutter->set_visible(visible);
+        gutter->set_fill_brush(gutter_brush);
+        gutter->set_stroke_brush(MVGBrush{MVGBrushNone, {}, {}});
+        gutter->set_stroke_width(0);
+
+        MVGRect *bar = c->new_rounded_rectangle(vec2(0), vec2(0), 0.0f);
+        bar->set_z(100.f);
+        bar->set_radius(bar_radius);
+        bar->set_visible(visible);
+        bar->set_fill_brush(bar_brush);
+        bar->set_stroke_brush(MVGBrush{MVGBrushNone, {}, {}});
+        bar->set_stroke_width(0);
+
+        if (axis == horizontal) {
+            float bar_offset = -half_size.x + bar_length/2 + (size_remaining.x - bar_length) * value;
+            gutter->set_origin(vec2(half_size.x, gutter_thickness/2.0f));
+            gutter->set_halfsize(vec2(half_size.x, gutter_thickness/2.0f));
+            bar->set_halfsize(vec2(bar_length/2.0f, bar_thickness/2.0f));
+            bar->pos = position + vec3(bar_offset, 0, 0);
+        }
+
+        if (axis == vertical) {
+            float bar_offset = -half_size.y + bar_length/2 + (size_remaining.y - bar_length) * (1.0f - value);
+            gutter->set_origin(vec2(gutter_thickness/2.0f, half_size.y));
+            gutter->set_halfsize(vec2(gutter_thickness/2.0f, half_size.y));
+            bar->set_halfsize(vec2(bar_thickness/2.0f, bar_length/2.0f));
+            bar->pos = position + vec3(0, bar_offset, 0);
+        }
+    }
+
+    virtual bool dispatch(Event *e)
+    {
+        MouseEvent *me = reinterpret_cast<MouseEvent*>(e);
+
+        if (e->type != mouse) {
+            return false;
+        }
+
+        vec3 size_remaining = assigned_size - m();
+        vec3 half_size = size_remaining / 2.0f;
+        vec3 gutter_dist = me->pos - position;
+        float gutter_thickness = gutter_thickness/2.0f + border[0];
+        float bar_dist = 0;
+        if (axis == horizontal) {
+            float bar_offset = -half_size.x + bar_length/2 + (size_remaining.x - bar_length) * value;
+            bar_dist = glm::distance(position + vec3(bar_offset, 0, 0), me->pos);
+        }
+        if (axis == vertical) {
+            float bar_offset = -half_size.y + bar_length/2 + (size_remaining.y - bar_length) * (1.0f - value);
+            bar_dist = glm::distance(position + vec3(0, bar_offset, 0), me->pos);
+        }
+        bool in_bar = bar_dist < (bar_length + border[0]);
+
+        float new_value = 0.0f;
+        bool in_gutter = false;
+
+        if (axis == horizontal) {
+            new_value = (gutter_dist.x + half_size.x) / (size_remaining.x - bar_length);
+            in_gutter = gutter_dist.x >= -half_size.x && gutter_dist.x <= half_size.x &&
+                        gutter_dist.y >= -gutter_thickness && gutter_dist.y <= gutter_thickness;
+        }
+
+        if (axis == vertical) {
+            new_value = 1.0f - ((gutter_dist.y + half_size.y) / (size_remaining.y - bar_length));
+            in_gutter = gutter_dist.y >= -half_size.y && gutter_dist.y <= half_size.y &&
+                        gutter_dist.x >= -gutter_thickness && gutter_dist.x <= gutter_thickness;
+        }
+
+        if (e->qualifier == pressed && !inside) {
+            inside = in_bar || in_gutter;
+        }
+
+        if (inside) {
+            set_value(std::min(std::max(new_value, 0.0f), 1.0f));
+        }
+
+        if (e->qualifier == released && inside) {
+            inside = false;
         }
 
         return inside;

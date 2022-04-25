@@ -22,65 +22,119 @@
 #include "canvas.h"
 #include "color.h"
 #include "logger.h"
+#include "file.h"
+#include "ui9.h"
 #include "app.h"
 
 #include "terminal.h"
 #include "cellgrid.h"
 #include "typeface.h"
 
-cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term, bool test_mode)
+struct cu_cellgrid_ui9 : cu_cellgrid
 {
-    cu_cellgrid *cg = new cu_cellgrid{};
+    cu_term *term;
+    font_manager_ft *manager;
 
-    cg->term = term;
-    cg->manager = manager;
+    ui9::Root root;
+    MVGCanvas canvas;
+    ui9::Scroller *vscroll;
+    ui9::Scroller *hscroll;
 
+    cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool test_mode);
+
+    virtual cu_winsize visible();
+    virtual cu_winsize draw(draw_list &batch);
+
+    virtual font_manager_ft* get_manager();
+    virtual cu_term* get_terminal();
+    virtual MVGCanvas* get_canvas();
+    virtual ui9::Root* get_root();
+
+    void scroll_event(ui9::axis_2D axis, float val);
+
+    font_face_ft* cell_font(cu_cell &cell);
+    cu_cell cell_col(cu_cell &cell);
+    cu_winsize draw_loop(int rows, int cols,
+        std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
+        std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
+        std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb);
+};
+
+
+cu_cellgrid_ui9::cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool test_mode)
+    : term(term), manager(manager), root(manager), canvas(manager)
+{
     if (test_mode) {
-        cg->width = 1200;
-        cg->height = 800;
-        cg->font_size = 25.0f;
-        cg->margin = 0.0f;
+        width = 1200;
+        height = 800;
+        font_size = 25.0f;
+        margin = 0.0f;
+        background_color = 0xffffffff;
     } else {
         #if defined __APPLE__
-        cg->width = 630;
-        cg->height = 440;
-        cg->font_size = 12.5f;
-        cg->margin = 15.0f;
+            width = 630;
+            height = 440;
+            font_size = 12.5f;
+            margin = 15.0f;
         #else
-        cg->width = 1260;
-        cg->height = 860;
-        cg->font_size = 25.0f;
-        cg->margin = 30.0f;
+            width = 1260;
+            height = 860;
+            font_size = 25.0f;
+            margin = 30.0f;
         #endif
+        background_color = 0xffe8e8e8;
     }
-    cg->cursor_color = 0x40000000;
-    cg->text_lang = "en";
-    cg->rscale = 1.0f;
-    cg->flags = cu_cellgrid_background;
+    cursor_color = 0x40000000;
+    text_lang = "en";
+    rscale = 1.0f;
+    flags = cu_cellgrid_background;
+    vdelta = 0;
 
-    cu_typeface_init(cg);
+    vscroll = new ui9::Scroller();
+    vscroll->set_orientation(ui9::axis_2D::vertical);
+    vscroll->set_callback([&](float val) {
+        scroll_event(ui9::axis_2D::vertical, val);
+    });
+    root.add_child(vscroll);
 
-    return cg;
+    hscroll = new ui9::Scroller();
+    hscroll->set_orientation(ui9::axis_2D::horizontal);
+    hscroll->set_callback([&](float val) {
+        scroll_event(ui9::axis_2D::horizontal, val);
+    });
+    root.add_child(hscroll);
+
+    cu_typeface_init(this);
 }
 
-static font_face_ft* cell_font(cu_cellgrid *cg, cu_cell &cell)
+cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term, bool test_mode)
+{
+    return new cu_cellgrid_ui9(manager, term, test_mode);
+}
+
+font_manager_ft* cu_cellgrid_ui9::get_manager() { return manager; }
+cu_term* cu_cellgrid_ui9::get_terminal() { return term; }
+MVGCanvas* cu_cellgrid_ui9::get_canvas() { return &canvas; }
+ui9::Root* cu_cellgrid_ui9::get_root() { return &root; }
+
+font_face_ft* cu_cellgrid_ui9::cell_font(cu_cell &cell)
 {
     font_face *face;
 
     if (cell.codepoint >= 0x1f000 && cell.codepoint <= 0x1ffff) {
-        face = cg->mono1_emoji;
+        face = mono1_emoji;
     }
     else if (cell.flags & cu_cell_bold) {
-        face = cg->mono1_bold;
+        face = mono1_bold;
     }
     else {
-        face = cg->mono1_regular;
+        face = mono1_regular;
     }
 
     return static_cast<font_face_ft*>(face);
 }
 
-static cu_cell cell_col(cu_cellgrid *cg, cu_cell &cell)
+cu_cell cu_cellgrid_ui9::cell_col(cu_cell &cell)
 {
     uint fg = cell.fg;
     uint bg = cell.bg;
@@ -98,25 +152,27 @@ static cu_cell cell_col(cu_cellgrid *cg, cu_cell &cell)
     }
 }
 
-cu_winsize cu_cellgrid_visible(cu_cellgrid *cg)
+cu_winsize cu_cellgrid_ui9::visible()
 {
     /* vis_lines == vis_rows initially */
-    int vis_rows = (int)std::max(0.f, cg->height - cg->margin*2.f) / cg->fm.leading;
-    int vis_cols = (int)std::max(0.f, cg->width  - cg->margin*2.f) / cg->fm.advance;
+    int vis_rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
+    int vis_cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
     return cu_winsize { vis_rows, vis_rows, vis_cols };
 }
 
-static cu_winsize draw_loop(cu_cellgrid *cg, int rows, int cols,
+cu_winsize cu_cellgrid_ui9::draw_loop(int rows, int cols,
     std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
     std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
     std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
     int wrapline_count = 0;
-    bool linewrap = (cg->term->flags & cu_flag_DECAWM) > 0;
-    size_t linecount = cg->term->lines.size();
-    for (size_t k = linecount - 1, l = 0; k < linecount && l < rows; k--) {
+    bool linewrap = (term->flags & cu_flag_DECAWM) > 0;
+    ssize_t linecount = term->lines.size();
+    for (ssize_t k = linecount - 1 - vdelta, l = 0; l < rows; k--) {
+        if (k >= linecount) { l++; continue; }
+        if (k < 0) break;
         font_face_ft *face, *lface = nullptr;
-        cu_line line = cg->term->lines[k];
+        cu_line line = term->lines[k];
         line.unpack();
         size_t cellcount = line.cells.size();
         size_t wraplines = cellcount == 0 ? 1
@@ -136,29 +192,29 @@ static cu_winsize draw_loop(cu_cellgrid *cg, int rows, int cols,
     }
     return cu_winsize{
         rows - wrapline_count, rows, cols,
-        (int)cg->width, (int)cg->height
+        (int)width, (int)height
     };
 }
 
-cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas)
+cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 {
-    text_renderer_ft renderer(cg->manager, cg->rscale);
+    text_renderer_ft renderer(manager, rscale);
     std::vector<glyph_shape> shapes;
 
-    int rows = (int)std::max(0.f, cg->height - cg->margin*2.f) / cg->fm.leading;
-    int cols = (int)std::max(0.f, cg->width  - cg->margin*2.f) / cg->fm.advance;
-    int font_size = (int)(cg->fm.size * 64.0f);
-    int advance_x = (int)(cg->fm.advance * 64.0f);
-    float glyph_height = cg->fm.height - cg->fm.descender;
-    float y_offset = floorf((cg->fm.leading - glyph_height)/2.f) + cg->fm.descender;
-    int clrow = cg->term->cur_row, clcol = cg->term->cur_col;
-    float ox = cg->margin, oy = cg->height - cg->margin;
+    int rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
+    int cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
+    int font_size = (int)(fm.size * 64.0f);
+    int advance_x = (int)(fm.advance * 64.0f);
+    float glyph_height = fm.height - fm.descender;
+    float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
+    int clrow = term->cur_row, clcol = term->cur_col;
+    float ox = margin, oy = height - margin;
 
     auto render_block = [&](int row, int col, int h, int w, uint c)
     {
         float u1 = 0.f, v1 = 0.f, u2 = 0.f, v2 = 0.f;
-        float x2 = ox + col * cg->fm.advance, x1 = x2 + (cg->fm.advance * w);
-        float y1 = oy - row * cg->fm.leading, y2 = y1 - (cg->fm.leading * h);
+        float x2 = ox + col * fm.advance, x1 = x2 + (fm.advance * w);
+        float y1 = oy - row * fm.leading, y2 = y1 - (fm.leading * h);
         uint o0 = draw_list_vertex(batch, {{x1, y1, 0}, {u1, v1}, c});
         uint o1 = draw_list_vertex(batch, {{x2, y1, 0}, {u2, v1}, c});
         uint o2 = draw_list_vertex(batch, {{x2, y2, 0}, {u2, v2}, c});
@@ -169,9 +225,9 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
 
     auto render_underline = [&](int row, int col, int w, uint fg)
     {
-        float lw = cg->fm.advance * w, sw = 2.0f;
-        float x1 = ox + col * cg->fm.advance, x2 = x1 + lw;
-        float y = oy - row * cg->fm.leading - (y_offset + cg->fm.underline_position - sw);
+        float lw = fm.advance * w, sw = 2.0f;
+        float x1 = ox + col * fm.advance, x2 = x1 + lw;
+        float y = oy - row * fm.leading - (y_offset + fm.underline_position - sw);
         canvas.set_stroke_width(sw);
         canvas.set_fill_brush(MVGBrush{MVGBrushNone, { }, { }});
         canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { color(fg) }});
@@ -182,18 +238,28 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
 
     auto render_text = [&](float x, float y, font_face_ft *face)
     {
-        text_segment segment("", cg->text_lang, face, font_size, x, y-y_offset, 0);
+        text_segment segment("", text_lang, face, font_size, x, y-y_offset, 0);
         renderer.render(batch, shapes, segment);
         shapes.clear();
     };
 
-    /* emit background */
-    if ((cg->flags & cu_cellgrid_background) > 0) {
+    /* set up scale/translate matrix */
+    float s = 1.0f;
+    float tx = width/2.0f;
+    float ty = height/2.0f;
+    canvas.set_transform(mat3(s,  0,  0,
+                                  0,  s,  0,
+                                  0,  0,  1));
+    canvas.set_scale(rscale);
+
+    /* render border */
+
+    if ((flags & cu_cellgrid_background) > 0) {
         color white = color(1.0f, 1.0f, 1.0f, 1.0f);
         color black = color(0.0f, 0.0f, 0.0f, 1.0f);
-        float w = 2.0f, m = cg->margin/2.f + w;
-        float tx = cg->width/2.0f;
-        float ty = cg->height/2.0f;
+        float w = 2.0f, m = margin/2.f + w;
+        float tx = width/2.0f;
+        float ty = height/2.0f;
         canvas.clear();
         canvas.set_fill_brush(MVGBrush{MVGBrushSolid, { }, { white }});
         canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { black }});
@@ -202,12 +268,12 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
         canvas.emit(batch);
     }
 
-    /* render background */
+    /* render background colors */
 
-    cu_winsize dim = draw_loop(cg, rows, cols,
+    cu_winsize dim = draw_loop(rows, cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
-            uint bg = cell_col(cg, cell).bg;
+            uint bg = cell_col(cell).bg;
             render_block(l, i-o, 1, 1, bg);
         },
         [&] (auto line, auto k, auto l, auto o, auto i) {}
@@ -215,15 +281,15 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
 
     /* render text */
 
-    draw_loop(cg, rows, cols,
+    draw_loop(rows, cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
-            font_face_ft *face = cell_font(cg, cell);
+            font_face_ft *face = cell_font(cell);
             uint glyph = cu_typeface_lookup_glyph(face, cell.codepoint);
             shapes.push_back({
-                glyph, (unsigned)o, 0, 0, advance_x, 0, cell_col(cg, cell).fg
+                glyph, (unsigned)o, 0, 0, advance_x, 0, cell_col(cell).fg
             });
-            render_text(ox + (i-o) * cg->fm.advance, oy - l * cg->fm.leading, face);
+            render_text(ox + (i-o) * fm.advance, oy - l * fm.leading, face);
         },
         [&] (auto line, auto k, auto l, auto o, auto i) {}
     );
@@ -234,7 +300,7 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
     bool under, lunder;
     uint fg, lfg;
 
-    draw_loop(cg, rows, cols,
+    draw_loop(rows, cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {
             lounder = 0;
             lunder = under = false;
@@ -242,7 +308,7 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
         },
         [&] (auto cell, auto k, auto l, auto o, auto i) {
             under = (cell.flags & cu_cell_underline) > 0;
-            fg = cell_col(cg, cell).fg;
+            fg = cell_col(cell).fg;
             if ((i-o)-lounder > 0 && (under != lunder || fg != lfg)) {
                 if (lunder) render_underline(l, lounder, (i-o)-lounder, lfg);
             }
@@ -263,11 +329,11 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
 
     /* render cursor */
 
-    if ((cg->term->flags & cu_flag_DECTCEM) > 0) {
-        draw_loop(cg, rows, cols,
+    if ((term->flags & cu_flag_DECTCEM) > 0) {
+        draw_loop(rows, cols,
             [&] (auto line, auto k, auto l, auto o, auto i) {
                 if (clrow == k && clcol >= o && clcol < o + cols) {
-                    render_block(l, clcol - o, 1, 1, cg->cursor_color);
+                    render_block(l, clcol - o, 1, 1, cursor_color);
                 }
             },
             [&] (auto cell, auto k, auto l, auto o, auto i) {},
@@ -275,5 +341,41 @@ cu_winsize cu_cellgrid_draw(cu_cellgrid *cg, draw_list &batch, MVGCanvas &canvas
         );
     }
 
+    canvas.emit(batch);
+
+    /* render scrollbars */
+
+    if ((flags & cu_cellgrid_background) > 0)
+    {
+        vscroll->set_visible(true);
+        vscroll->set_position({width-20, height/2, 0});
+        vscroll->set_preferred_size({15, height - margin, 0});
+
+        hscroll->set_visible(false);
+        hscroll->set_position({width/2, height-20, 0});
+        hscroll->set_preferred_size({width - margin, 15, 0});
+
+        root.layout(&canvas);
+        canvas.emit(batch);
+    }
+
     return dim;
+}
+
+void cu_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
+{
+    ssize_t vis_lines = term->vis_lines;
+    ssize_t tot_lines = term->lines.size();
+    ssize_t vrange = tot_lines - vis_lines > 0 ? tot_lines - vis_lines : 0;
+
+    // todo index vis_lines - currently it only counts wraps on screen
+
+    switch (axis) {
+    case ui9::axis_2D::vertical:
+        vdelta = (size_t)(val * (float)vrange);
+        break;
+    case ui9::axis_2D::horizontal:
+        //hdelta = (size_t)(val * (float)hrange);
+        break;
+    }
 }
