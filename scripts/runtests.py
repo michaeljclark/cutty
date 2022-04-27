@@ -3,7 +3,7 @@
 import os
 import re
 import glob
-import readbox
+import sbox
 import subprocess
 
 mesa_env_overrides = {
@@ -31,14 +31,14 @@ for test_sbox in sbox_files:
         ret = subprocess.run(capture_cmd, check=True, env=mesa_env)
         tesseract_cmd = [ 'tesseract', '--dpi', '72', '--psm', '6', '-l', 'eng', capture_png, capture_prefix, 'makebox' ]
         ret = subprocess.run(tesseract_cmd, check=True)
-        data1 = readbox.simplify_box_file(test_box, 1200, 800, 1200/80, 800/24)
-        data2 = readbox.read_sbox_file(test_sbox)
+        data1 = sbox.simplify_box_file(test_box, 1200, 800, 1200/80, 800/24)
+        data2 = sbox.read_sbox_file(test_sbox)
         if data1 == data2:
             print("%-72s: PASS" % test_name)
             pass_count += 1
         else:
             print("%-72s: FAIL" % test_name)
-            readbox.write_sbox_file(data1, test_sbox_out)
+            sbox.write_sbox_file(data1, test_sbox_out)
 
 print("=== %d out of %d pass ===" % (pass_count, len(sbox_files)))
 
