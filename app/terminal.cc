@@ -326,7 +326,7 @@ static void cu_term_erase_screen(cu_term *t, uint arg)
         }
         break;
     case cu_term_clear_start:
-        for (size_t row = t->cur_row + 1; row < t->lines.size(); row++) {
+        for (ssize_t row = t->cur_row; row < t->lines.size(); row--) {
             t->lines[row].clear();
         }
         break;
