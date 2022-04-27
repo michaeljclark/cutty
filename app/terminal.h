@@ -74,10 +74,11 @@ enum cu_line_flag
 
 struct cu_line
 {
-	uint pcount;
+	size_t pcount;
 	std::vector<cu_cell> cells;
 	std::string utf8;
 
+	size_t count();
 	bool ispacked();
 	void pack();
 	void unpack();
@@ -185,6 +186,9 @@ struct cu_winsize
 inline bool operator==(cu_winsize &a, cu_winsize&b) { return a.tuple() == b.tuple(); }
 inline bool operator!=(cu_winsize &a, cu_winsize&b) { return a.tuple() != b.tuple(); }
 
+struct cu_line_voff { size_t lline, offset; };
+struct cu_line_loff { size_t vline, count; };
+
 struct cu_term
 {
 	uint state;
@@ -208,6 +212,9 @@ struct cu_term
 
 	cu_cell tmpl;
 	std::vector<cu_line> lines;
+	std::vector<cu_line_voff> voffsets;
+	std::vector<cu_line_loff> loffsets;
+	llong min_row;
 	llong cur_row;
 	llong cur_col;
 	llong vis_rows;
@@ -221,6 +228,7 @@ cu_term* cu_term_new();
 void cu_term_close(cu_term *term);
 void cu_term_set_fd(cu_term *term, int fd);
 void cu_term_set_dim(cu_term *term, cu_winsize dim);
+void cu_term_update_offsets(cu_term *t);
 void cu_term_reset(cu_term *term);
 ssize_t cu_term_io(cu_term *term);
 ssize_t cu_term_process(cu_term *term);

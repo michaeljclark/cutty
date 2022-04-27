@@ -67,6 +67,7 @@ cu_term* cu_term_new()
     t->out_end = 0;
 
     t->lines.push_back(cu_line{});
+    t->min_row = 0;
     t->cur_row = 0;
     t->cur_col = 0;
 
@@ -130,6 +131,8 @@ static void cu_term_send(cu_term *t, uint c)
  *   contains an offset into utf8_data and the cell count is in pcount.
  */
 
+size_t cu_line::count() { return pcount > 0 ? pcount : cells.size(); }
+
 bool cu_line::ispacked() { return pcount > 0; }
 
 void cu_line::pack()
@@ -191,6 +194,55 @@ void cu_line::clear()
     utf8.shrink_to_fit();
 }
 
+void cu_term_update_offsets(cu_term *t)
+{
+    size_t cols = t->vis_cols;
+    bool wrap_enabled = (t->flags & cu_flag_DECAWM) > 0;
+    size_t vlstart, vl;
+
+    /* recompute line offsets incrementally from min_row */
+    if (t->min_row == 0) {
+        vlstart = 0;
+    } else {
+        auto &loff = t->loffsets[t->min_row - 1];
+        vlstart = loff.vline + loff.count;
+    }
+
+    /* count lines with wrap incrementally from min row */
+    vl = vlstart;
+    for (size_t k = t->min_row; k < t->lines.size(); k++) {
+        size_t cell_count = t->lines[k].count();
+        size_t wrap_count = cell_count == 0 ? 1
+            : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
+        vl += wrap_count;
+    }
+
+    /* write out indices incrementally from min row */
+    t->voffsets.resize(vl);
+    t->loffsets.resize(t->lines.size());
+    vl = vlstart;
+    for (size_t k = t->min_row; k < t->lines.size(); k++) {
+        size_t cell_count = t->lines[k].count();
+        size_t wrap_count = cell_count == 0 ? 1
+            : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
+        t->loffsets[k] = { vl, wrap_count };
+        for (size_t j = 0; j < wrap_count; j++, vl++) {
+            t->voffsets[vl] = { k, j * cols };
+        }
+    }
+
+    /* set min_row to cur_row */
+    t->min_row = t->cur_row;
+}
+
+void cu_term_set_dim(cu_term *t, cu_winsize d)
+{
+    t->vis_lines = d.vis_lines;
+    t->vis_rows = d.vis_rows;
+    t->vis_cols = d.vis_cols;
+    t->min_row = 0;
+}
+
 static void cu_term_set_row(cu_term *t, llong row)
 {
     if (row < 0) row = 0;
@@ -202,6 +254,7 @@ static void cu_term_set_row(cu_term *t, llong row)
             t->lines[row].unpack();
         }
         t->cur_row = row;
+        t->min_row = std::min(t->min_row, row);
     }
 }
 
@@ -256,15 +309,6 @@ void cu_term_set_fd(cu_term *t, int fd)
     t->fd = fd;
 }
 
-void cu_term_set_dim(cu_term *t, cu_winsize d)
-{
-    Trace("cu_term_set_dim: vis_lines=%d vis_rows=%d vis_cols=%d\n",
-        d.vis_lines, d.vis_rows, d.vis_cols);
-    t->vis_lines = d.vis_lines;
-    t->vis_rows = d.vis_rows;
-    t->vis_cols = d.vis_cols;
-}
-
 void cu_term_reset(cu_term *t)
 {
     Trace("cu_term_reset\n");
@@ -280,20 +324,17 @@ static void cu_term_erase_screen(cu_term *t, uint arg)
         for (size_t row = t->cur_row; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
-        // todo - recompute vis_lines
         break;
     case cu_term_clear_start:
         for (size_t row = t->cur_row + 1; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
-        // todo - recompute vis_lines
         break;
     case cu_term_clear_all:
         for (size_t row = 0; row < t->lines.size(); row++) {
             t->lines[row].clear();
         }
         cu_term_move_abs(t, 1, 1);
-        // vis_lines == vis_rows
         t->vis_lines = t->vis_rows;
         break;
     }
@@ -307,7 +348,6 @@ static void cu_term_erase_line(cu_term *t, uint arg)
         if (t->cur_col < t->lines[t->cur_row].cells.size()) {
             t->lines[t->cur_row].cells.resize(t->cur_col);
         }
-        // todo - recompute vis_lines
         break;
     case cu_term_clear_start:
         if (t->cur_col < t->lines[t->cur_row].cells.size()) {
@@ -317,11 +357,9 @@ static void cu_term_erase_line(cu_term *t, uint arg)
                 t->lines[t->cur_row].cells[col] = cell;
             }
         }
-        // todo - recompute vis_lines
         break;
     case cu_term_clear_all:
         t->lines[t->cur_row].cells.resize(0);
-        // todo - recompute vis_lines
         break;
     }
 }

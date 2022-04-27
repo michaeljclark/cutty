@@ -165,33 +165,41 @@ cu_winsize cu_cellgrid_ui9::draw_loop(int rows, int cols,
     std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
     std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
-    int wrapline_count = 0;
-    bool linewrap = (term->flags & cu_flag_DECAWM) > 0;
-    ssize_t linecount = term->lines.size();
-    for (ssize_t k = linecount - 1 - vdelta, l = 0; l < rows; k--) {
-        if (k >= linecount) { l++; continue; }
-        if (k < 0) break;
-        font_face_ft *face, *lface = nullptr;
-        cu_line line = term->lines[k];
-        line.unpack();
-        size_t cellcount = line.cells.size();
-        size_t wraplines = cellcount == 0 ? 1
-            : linewrap ? (cellcount + cols - 1) / cols : 1;
-        for (size_t j = wraplines - 1; j < wraplines && l < rows; j--) {
-            if (j != 0) wrapline_count++;
-            size_t o = j * cols;
-            size_t limit = std::min(o + cols, cellcount);
-            linepre_cb(line, k, l, o, o);
-            for (size_t i = o; i < limit; i++) {
-                cu_cell &cell = line.cells[i];
-                cell_cb(cell, k, l, o, i);
-            }
-            linepost_cb(line, k, l, o, limit);
-            l++;
+    int wrap_count = 0;
+    bool wrap_enabled = (term->flags & cu_flag_DECAWM) > 0;
+    ssize_t tot_lines = wrap_enabled ? term->voffsets.size() : term->lines.size();
+
+    for (ssize_t j = tot_lines - 1 - vdelta, l = 0; l < rows; j--, l++)
+    {
+        if (j >= tot_lines) continue;
+        if (j < 0) break;
+
+        size_t k, o;
+        cu_line line;
+
+        if (wrap_enabled) {
+            cu_line_voff voff = term->voffsets[j];
+            k = voff.lline;
+            o = voff.offset;
+            if (o > 0) wrap_count++;
+        } else {
+            k = j;
+            o = 0;
         }
+
+        line = term->lines[k];
+        line.unpack();
+        size_t limit = std::min(o + cols, line.count());
+        linepre_cb(line, k, l, o, o);
+        for (size_t i = o; i < limit; i++) {
+            cu_cell &cell = line.cells[i];
+            cell_cb(cell, k, l, o, i);
+        }
+        linepost_cb(line, k, l, o, limit);
     }
+
     return cu_winsize{
-        rows - wrapline_count, rows, cols,
+        rows - wrap_count, rows, cols,
         (int)width, (int)height
     };
 }
@@ -200,6 +208,8 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 {
     text_renderer_ft renderer(manager, rscale);
     std::vector<glyph_shape> shapes;
+
+    cu_term_update_offsets(term);
 
     int rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
     int cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
@@ -365,10 +375,9 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 void cu_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
 {
     ssize_t vis_lines = term->vis_lines;
-    ssize_t tot_lines = term->lines.size();
+    bool wrap_enabled = (term->flags & cu_flag_DECAWM) > 0;
+    ssize_t tot_lines = wrap_enabled ? term->voffsets.size() : term->lines.size();;
     ssize_t vrange = tot_lines - vis_lines > 0 ? tot_lines - vis_lines : 0;
-
-    // todo index vis_lines - currently it only counts wraps on screen
 
     switch (axis) {
     case ui9::axis_2D::vertical:
