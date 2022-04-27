@@ -34,10 +34,10 @@ for test_sbox in sbox_files:
         data1 = readbox.simplify_box_file(test_box, 1200, 800, 1200/80, 800/24)
         data2 = readbox.read_sbox_file(test_sbox)
         if data1 == data2:
-            print("%s: PASS" % test_name)
+            print("%-72s: PASS" % test_name)
             pass_count += 1
         else:
-            print("%s: FAIL" % test_name)
+            print("%-72s: FAIL" % test_name)
             readbox.write_sbox_file(data1, test_sbox_out)
 
 print("=== %d out of %d pass ===" % (pass_count, len(sbox_files)))

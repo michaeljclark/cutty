@@ -138,10 +138,12 @@ list(APPEND GLYB_LIBS
 # Test programs
 #
 
-foreach(test IN ITEMS t0 t1 t2 t3 t4 t5 t6 t7 t8)
-  add_executable(${test} tests/${test}.cc)
-  target_link_libraries(${test} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
-endforeach(test)
+file(GLOB TEST_ALL_SOURCES RELATIVE ${CMAKE_SOURCE_DIR} "tests/*.cc")
+foreach(TEST_SOURCE ${TEST_ALL_SOURCES})
+  string(REGEX REPLACE "^.*/([^/]*)\\.[^.]*$" "\\1" TEST_NAME ${TEST_SOURCE})
+  add_executable(${TEST_NAME} ${TEST_SOURCE})
+  target_link_libraries(${TEST_NAME} ${GLYB_LIBS} ${CMAKE_DL_LIBS})
+endforeach()
 
 #
 # CLI programs
