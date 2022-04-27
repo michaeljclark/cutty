@@ -208,13 +208,13 @@ struct cu_term
 
 	cu_cell tmpl;
 	std::vector<cu_line> lines;
-	uint cur_row;
-	uint cur_col;
-	uint vis_rows;
-	uint vis_cols;
-	uint vis_lines;
-	uint top_marg;
-	uint bot_marg;
+	llong cur_row;
+	llong cur_col;
+	llong vis_rows;
+	llong vis_cols;
+	llong vis_lines;
+	llong top_marg;
+	llong bot_marg;
 };
 
 cu_term* cu_term_new();

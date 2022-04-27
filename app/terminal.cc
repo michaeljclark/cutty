@@ -191,7 +191,7 @@ void cu_line::clear()
     utf8.shrink_to_fit();
 }
 
-static void cu_term_set_row(cu_term *t, int row)
+static void cu_term_set_row(cu_term *t, llong row)
 {
     if (row < 0) row = 0;
     if (row != t->cur_row) {
@@ -205,7 +205,7 @@ static void cu_term_set_row(cu_term *t, int row)
     }
 }
 
-static void cu_term_set_col(cu_term *t, int col)
+static void cu_term_set_col(cu_term *t, llong col)
 {
     if (col < 0) col = 0;
     if (col != t->cur_col) {
@@ -213,33 +213,33 @@ static void cu_term_set_col(cu_term *t, int col)
     }
 }
 
-static void cu_term_move_abs(cu_term *t, int row, int col)
+static void cu_term_move_abs(cu_term *t, llong row, llong col)
 {
-    Trace("cu_term_move_abs: %d %d\n", row, col);
+    Trace("cu_term_move_abs: %lld %lld\n", row, col);
     if (row != -1) {
-        size_t new_row = std::max(size_t(0), std::min(t->lines.size() - 1,
-                                  t->lines.size() - t->vis_lines + row - 1));
+        size_t new_row = std::max(0ll, std::min((llong)t->lines.size() - 1,
+                                  (llong)t->lines.size() - (llong)t->vis_lines + (llong)row - 1));
         cu_term_set_row(t, new_row);
     }
     if (col != -1) {
-        cu_term_set_col(t, std::max(0, col - 1));
+        cu_term_set_col(t, std::max(0ll, col - 1));
     }
 }
 
-static void cu_term_move_rel(cu_term *t, int row, int col)
+static void cu_term_move_rel(cu_term *t, llong row, llong col)
 {
-    Trace("cu_term_move_rel: %d %d\n", row, col);
-    int new_row = t->cur_row + row;
-    int new_col = col == cu_term_col_home ? 0 : t->cur_col + col;
+    Trace("cu_term_move_rel: %lld %lld\n", row, col);
+    llong new_row = t->cur_row + row;
+    llong new_col = col == cu_term_col_home ? 0 : t->cur_col + col;
     if (new_row < 0) new_row = 0;
     if (new_col < 0) new_col = 0;
     cu_term_set_row(t, new_row);
     cu_term_set_col(t, new_col);
 }
 
-static void cu_term_scroll_region(cu_term *t, int line0, int line1)
+static void cu_term_scroll_region(cu_term *t, llong line0, llong line1)
 {
-    Trace("cu_term_scroll_region: %d %d\n", line0, line1);
+    Trace("cu_term_scroll_region: %lld %lld\n", line0, line1);
     t->top_marg = line0;
     t->bot_marg = line1;
 }
@@ -332,11 +332,11 @@ static void cu_term_insert_lines(cu_term *t, uint arg)
     if (arg == 0) return;
     // consider line editing mode: *following*, or preceding
     // consider bottom margin for following mode. add bounds checks
-    uint top = t->top_marg == 0 ? 1           : t->top_marg;
-    uint bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
-    uint scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
+    llong top = t->top_marg == 0 ? 1           : t->top_marg;
+    llong bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
+    llong scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
     t->lines[t->cur_row].pack();
-    for (int i = 0; i < arg; i++) {
+    for (uint i = 0; i < arg; i++) {
         t->lines.insert(t->lines.begin() + t->cur_row, cu_line{});
         t->lines.erase(t->lines.end() - 1 - scrolloff);
     }
@@ -350,11 +350,11 @@ static void cu_term_delete_lines(cu_term *t, uint arg)
     if (arg == 0) return;
     // consider line editing mode: *following*, or preceding
     // consider bottom margin for following mode. add bounds checks
-    uint top = t->top_marg == 0 ? 1           : t->top_marg;
-    uint bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
-    uint scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
+    llong top = t->top_marg == 0 ? 1           : t->top_marg;
+    llong bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
+    llong scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
     t->lines[t->cur_row].pack();
-    for (int i = 0; i < arg; i++) {
+    for (uint i = 0; i < arg; i++) {
         if (t->cur_row < t->lines.size()) {
             t->lines.erase(t->lines.begin() + t->cur_row);
             t->lines.insert(t->lines.end() - scrolloff, cu_line{});
@@ -525,10 +525,10 @@ static void zterm_csi_dsr(cu_term *t)
     switch (opt_arg(t, 0, 0)) {
     case 6: { /* report cursor position */
         char buf[32];
-        int col = t->cur_col + 1;
-        int row = t->cur_row - (t->lines.size() - t->vis_lines) + 1;
-        row = std::max(1, std::min(row, (int)t->vis_lines));
-        int len = snprintf(buf, sizeof(buf), "\x1b[%u;%uR", row, col);
+        llong col = t->cur_col + 1;
+        llong row = t->cur_row - (t->lines.size() - t->vis_lines) + 1;
+        row = std::max(1ll, std::min(row, t->vis_lines));
+        int len = snprintf(buf, sizeof(buf), "\x1b[%llu;%lluR", row, col);
         cu_term_write(t, buf, len);
         break;
     }
