@@ -96,9 +96,8 @@ bool tty_process::winsize(tty_winsize zws)
 
     if (this->zws == zws) return false;
 
-    Debug("tty_process::winsize: size changed: %dx%d (%d) -> %dx%d (%d)\n",
-        this->zws.vis_cols, this->zws.vis_rows, this->zws.vis_lines,
-        zws.vis_cols, zws.vis_rows, zws.vis_lines);
+    Debug("tty_process::winsize: size changed: %dx%d -> %dx%d\n",
+        this->zws.vis_cols, this->zws.vis_rows, zws.vis_cols, zws.vis_rows);
 
     this->zws = zws;
 

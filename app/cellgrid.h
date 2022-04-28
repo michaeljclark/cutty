@@ -20,7 +20,8 @@ struct tty_cellgrid
     float font_size;
     float rscale;
     int flags;
-    ssize_t vdelta;
+    llong scroll_row;
+    llong scroll_col;
 
     virtual ~tty_cellgrid() = default;
 

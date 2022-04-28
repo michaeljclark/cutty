@@ -164,14 +164,13 @@ struct tty_fontmetric
 
 struct tty_winsize
 {
-	int vis_lines;
 	int vis_rows;
 	int vis_cols;
 	int pix_width;
 	int pix_height;
 
 	template <typename... Args> constexpr auto tuple() {
-		return std::tie(vis_lines, vis_rows, vis_cols, pix_width, pix_height);
+		return std::tie(vis_rows, vis_cols, pix_width, pix_height);
 	}
 };
 
@@ -211,7 +210,6 @@ struct tty_teletype
 	llong cur_col;
 	llong vis_rows;
 	llong vis_cols;
-	llong vis_lines;
 	llong top_marg;
 	llong bot_marg;
 };
@@ -222,6 +220,12 @@ void tty_set_fd(tty_teletype *tty, int fd);
 void tty_set_dim(tty_teletype *tty, tty_winsize dim);
 void tty_update_offsets(tty_teletype *t);
 void tty_reset(tty_teletype *tty);
+tty_line_voff tty_visible_to_logical(tty_teletype *tty, llong vline);
+tty_line_loff tty_logical_to_visible(tty_teletype *tty, llong lline);
+llong tty_total_rows(tty_teletype *t);
+llong tty_total_lines(tty_teletype *t);
+llong tty_visible_rows(tty_teletype *t);
+llong tty_visible_lines(tty_teletype *t);
 ssize_t tty_io(tty_teletype *tty);
 ssize_t tty_proc(tty_teletype *tty);
 ssize_t tty_write(tty_teletype *tty, const char *buf, size_t len);

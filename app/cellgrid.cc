@@ -88,7 +88,8 @@ tty_cellgrid_ui9::tty_cellgrid_ui9(font_manager_ft *manager, tty_teletype *tty, 
     text_lang = "en";
     rscale = 1.0f;
     flags = tty_cellgrid_background;
-    vdelta = 0;
+    scroll_row = 0;
+    scroll_col = 0;
 
     vscroll = new ui9::Scroller();
     vscroll->set_orientation(ui9::axis_2D::vertical);
@@ -154,10 +155,9 @@ tty_cell tty_cellgrid_ui9::cell_col(tty_cell &cell)
 
 tty_winsize tty_cellgrid_ui9::visible()
 {
-    /* vis_lines == vis_rows initially */
     int vis_rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
     int vis_cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
-    return tty_winsize { vis_rows, vis_rows, vis_cols };
+    return tty_winsize { vis_rows, vis_cols, (int)width, (int)height };
 }
 
 tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
@@ -165,31 +165,18 @@ tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
     std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
     std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
-    int wrap_count = 0;
-    bool wrap_enabled = (tty->flags & tty_flag_DECAWM) > 0;
-    ssize_t tot_lines = wrap_enabled ? tty->voffsets.size() : tty->lines.size();
+    llong total_rows = tty_total_rows(tty);
 
-    for (ssize_t j = tot_lines - 1 - vdelta, l = 0; l < rows; j--, l++)
+    for (llong j = total_rows - 1 - scroll_row, l = 0; l < rows && j >= 0; j--, l++)
     {
-        if (j >= tot_lines) continue;
-        if (j < 0) break;
+        if (j >= total_rows) continue;
 
-        size_t k, o;
-        tty_line line;
-
-        if (wrap_enabled) {
-            tty_line_voff voff = tty->voffsets[j];
-            k = voff.lline;
-            o = voff.offset;
-            if (o > 0) wrap_count++;
-        } else {
-            k = j;
-            o = 0;
-        }
-
-        line = tty->lines[k];
-        line.unpack();
+        tty_line_voff voff = tty_visible_to_logical(tty, j);
+        size_t k = voff.lline, o = voff.offset;
+        tty_line line = tty->lines[k];
         size_t limit = std::min(o + cols, line.count());
+
+        line.unpack();
         linepre_cb(line, k, l, o, o);
         for (size_t i = o; i < limit; i++) {
             tty_cell &cell = line.cells[i];
@@ -199,8 +186,7 @@ tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
     }
 
     return tty_winsize{
-        rows - wrap_count, rows, cols,
-        (int)width, (int)height
+        rows, cols, (int)width, (int)height
     };
 }
 
@@ -374,17 +360,17 @@ tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
 
 void tty_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
 {
-    ssize_t vis_lines = tty->vis_lines;
     bool wrap_enabled = (tty->flags & tty_flag_DECAWM) > 0;
-    ssize_t tot_lines = wrap_enabled ? tty->voffsets.size() : tty->lines.size();;
-    ssize_t vrange = tot_lines - vis_lines > 0 ? tot_lines - vis_lines : 0;
+    llong visible_rows = tty_visible_rows(tty);
+    llong total_rows = tty_total_rows(tty);
+    llong vrange = total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
 
     switch (axis) {
     case ui9::axis_2D::vertical:
-        vdelta = (size_t)(val * (float)vrange);
+        scroll_row = (size_t)(val * (float)vrange);
         break;
     case ui9::axis_2D::horizontal:
-        //hdelta = (size_t)(val * (float)hrange);
+        //scroll_col = (size_t)(val * (float)hrange);
         break;
     }
 }

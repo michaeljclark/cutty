@@ -196,9 +196,15 @@ void tty_line::clear()
 
 void tty_update_offsets(tty_teletype *t)
 {
-    size_t cols = t->vis_cols;
     bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
+    size_t cols = t->vis_cols;
     size_t vlstart, vl;
+
+    if (!wrap_enabled) {
+        t->voffsets.clear();
+        t->loffsets.clear();
+        return;
+    }
 
     /* recompute line offsets incrementally from min_row */
     if (t->min_row == 0) {
@@ -235,9 +241,70 @@ void tty_update_offsets(tty_teletype *t)
     t->min_row = t->cur_row;
 }
 
+tty_line_voff tty_visible_to_logical(tty_teletype *t, llong vline)
+{
+    bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
+
+    if (wrap_enabled) {
+        return t->voffsets[vline];
+    } else {
+        return tty_line_voff{ (size_t)vline, 0 };
+    }
+}
+
+tty_line_loff tty_logical_to_visible(tty_teletype *t, llong lline)
+{
+    bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
+
+    if (wrap_enabled) {
+        return t->loffsets[lline];
+    } else {
+        return tty_line_loff{ (size_t)lline, 0 };
+    }
+}
+
+llong tty_total_rows(tty_teletype *t)
+{
+    bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
+
+    return wrap_enabled ? t->voffsets.size() : t->lines.size();
+}
+
+llong tty_total_lines(tty_teletype *t)
+{
+    return t->lines.size();
+}
+
+llong tty_visible_rows(tty_teletype *t)
+{
+    return t->vis_rows;
+}
+
+llong tty_visible_lines(tty_teletype *t)
+{
+    bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
+    llong rows = t->vis_rows;
+
+    if (wrap_enabled) {
+        /*
+         * calculate the number of visible lines so that we can calculate
+         * absolute position while considering dynamically wrapped lines.
+         */
+        llong total_rows = wrap_enabled ? t->voffsets.size() : t->lines.size();
+        llong wrapped_rows = 0;
+        for (llong j = total_rows - 1, l = 0; l < rows && j >= 0; j--, l++)
+        {
+            if (j >= total_rows) continue;
+            if (tty_visible_to_logical(t, j).offset > 0) wrapped_rows++;
+        }
+        return rows - wrapped_rows;
+    } else {
+        return rows;
+    }
+}
+
 void tty_set_dim(tty_teletype *t, tty_winsize d)
 {
-    t->vis_lines = d.vis_lines;
     t->vis_rows = d.vis_rows;
     t->vis_cols = d.vis_cols;
     t->min_row = 0;
@@ -270,8 +337,10 @@ static void tty_move_abs(tty_teletype *t, llong row, llong col)
 {
     Trace("tty_move_abs: %lld %lld\n", row, col);
     if (row != -1) {
+        tty_update_offsets(t);
+        llong visible_lines = tty_visible_lines(t);
         size_t new_row = std::max(0ll, std::min((llong)t->lines.size() - 1,
-                                  (llong)t->lines.size() - (llong)t->vis_lines + (llong)row - 1));
+                        (llong)t->lines.size() - visible_lines + row - 1));
         tty_set_row(t, new_row);
     }
     if (col != -1) {
@@ -335,7 +404,6 @@ static void tty_erase_screen(tty_teletype *t, uint arg)
             t->lines[row].clear();
         }
         tty_move_abs(t, 1, 1);
-        t->vis_lines = t->vis_rows;
         break;
     }
 }
@@ -563,9 +631,11 @@ static void zterm_csi_dsr(tty_teletype *t)
     switch (opt_arg(t, 0, 0)) {
     case 6: { /* report cursor position */
         char buf[32];
+        tty_update_offsets(t);
+        llong visible_lines = tty_visible_lines(t);
         llong col = t->cur_col + 1;
-        llong row = t->cur_row - (t->lines.size() - t->vis_lines) + 1;
-        row = std::max(1ll, std::min(row, t->vis_lines));
+        llong row = t->cur_row - (t->lines.size() - visible_lines) + 1;
+        row = std::max(1ll, std::min(row, visible_lines));
         int len = snprintf(buf, sizeof(buf), "\x1b[%llu;%lluR", row, col);
         tty_write(t, buf, len);
         break;
