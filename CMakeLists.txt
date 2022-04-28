@@ -170,7 +170,7 @@ set(cutty_sources
     app/colors.cc
     app/process.cc
     app/render.cc
-    app/terminal.cc
+    app/teletype.cc
     app/typeface.cc)
 
 include_directories(app)

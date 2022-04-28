@@ -28,7 +28,7 @@
 #include "app.h"
 
 #include "ui9.h"
-#include "terminal.h"
+#include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"
 #include "typeface.h"
@@ -39,10 +39,10 @@ using namespace std::chrono;
 /* globals */
 
 static font_manager_ft manager;
-static std::unique_ptr<cu_term> term;
-static std::unique_ptr<cu_cellgrid> cg;
-static std::unique_ptr<cu_render> render;
-static std::unique_ptr<cu_process> process;
+static std::unique_ptr<tty_teletype> term;
+static std::unique_ptr<tty_cellgrid> cg;
+static std::unique_ptr<tty_render> render;
+static std::unique_ptr<tty_process> process;
 
 static bool help_text = false;
 static bool overlay_stats = false;
@@ -95,24 +95,24 @@ static void flip_buffer_y(uint* buffer, uint width, uint height)
 
 static void capture_app(int argc, char **argv)
 {
-    term = std::unique_ptr<cu_term>(cu_term_new());
-    cg = std::unique_ptr<cu_cellgrid>(cu_cellgrid_new(&manager, term.get(), true));
-    render = std::unique_ptr<cu_render>(cu_render_new(&manager, cg.get()));
-    process = std::unique_ptr<cu_process>(cu_process_new());
+    term = std::unique_ptr<tty_teletype>(tty_new());
+    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, term.get(), true));
+    render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
+    process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
 
-    cg->flags &= ~cu_cellgrid_background;
+    cg->flags &= ~tty_cellgrid_background;
     osmesa_init((uint)cg->width, (uint)cg->height);
 
     render->initialize();
     render->reshape(cg->width, cg->height, 1.f/cg->rscale);
 
-    cu_winsize dim = cg->visible();
-    cu_term_set_dim(term.get(), dim);
-    cu_term_reset(term.get());
+    tty_winsize dim = cg->visible();
+    tty_set_dim(term.get(), dim);
+    tty_reset(term.get());
 
     int fd = process->exec(dim, exec_path, exec_argv);
-    cu_term_set_fd(term.get(), fd);
+    tty_set_fd(term.get(), fd);
 
     uint running = 1;
     while (running) {
@@ -125,13 +125,13 @@ static void capture_app(int argc, char **argv)
                 ((uint)cg->width, (uint)cg->height, pixel_format_rgba, buffer));
             break;
         }
-        do if (cu_term_io(term.get()) < 0) {
+        do if (tty_io(term.get()) < 0) {
             running = 0;
         }
-        while (cu_term_process(term.get()) > 0);
+        while (tty_proc(term.get()) > 0);
     }
 
-    cu_term_close(term.get());
+    tty_close(term.get());
 
     OSMesaDestroyContext(ctx);
     free(buffer);

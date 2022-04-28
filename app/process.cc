@@ -22,15 +22,15 @@
 #include "app.h"
 #include "utf8.h"
 #include "colors.h"
-#include "terminal.h"
+#include "teletype.h"
 #include "process.h"
 
-cu_process* cu_process_new()
+tty_process* tty_process_new()
 {
-    return new cu_process{};
+    return new tty_process{};
 }
 
-int cu_process::exec(cu_winsize zws, const char *path, const char *const argv[])
+int tty_process::exec(tty_winsize zws, const char *path, const char *const argv[])
 {
     struct winsize ws;
     struct termios tio;
@@ -75,7 +75,7 @@ int cu_process::exec(cu_winsize zws, const char *path, const char *const argv[])
 
     switch ((pid = ::forkpty((int*)&fd, device, &tio, &ws))) {
     case -1:
-        Error("cu_process::forkpty: forkpty: %s", strerror(errno));
+        Error("tty_process::forkpty: forkpty: %s", strerror(errno));
     case 0:
         setenv("TERM", "xterm-256color", 1);
         setenv("LC_CTYPE", "UTF-8", 0);
@@ -83,20 +83,20 @@ int cu_process::exec(cu_winsize zws, const char *path, const char *const argv[])
         _exit(1);
     }
 
-    Debug("cu_process::forkpty: pid=%d path=%s argv0=%s fd=%d rows=%d cols=%d device=%s\n",
+    Debug("tty_process::forkpty: pid=%d path=%s argv0=%s fd=%d rows=%d cols=%d device=%s\n",
         pid, path, argv[0], fd, ws.ws_row, ws.ws_col, device);
 
     return fd;
 }
 
-bool cu_process::winsize(cu_winsize zws)
+bool tty_process::winsize(tty_winsize zws)
 {
     struct winsize ws;
     pid_t pgrp;
 
     if (this->zws == zws) return false;
 
-    Debug("cu_process::winsize: size changed: %dx%d (%d) -> %dx%d (%d)\n",
+    Debug("tty_process::winsize: size changed: %dx%d (%d) -> %dx%d (%d)\n",
         this->zws.vis_cols, this->zws.vis_rows, this->zws.vis_lines,
         zws.vis_cols, zws.vis_rows, zws.vis_lines);
 
@@ -109,17 +109,17 @@ bool cu_process::winsize(cu_winsize zws)
     ws.ws_ypixel = zws.pix_height;
 
     if (ioctl(fd, TIOCSWINSZ, (char *) &ws) < 0) {
-        Error("cu_process::winsize: ioctl(TIOCSWINSZ) failed: %s\n",
+        Error("tty_process::winsize: ioctl(TIOCSWINSZ) failed: %s\n",
             strerror(errno));
         return false;
     }
     if (ioctl(fd, TIOCGPGRP, &pgrp) < 0) {
-        Error("cu_process::winsize: ioctl(TIOCGPGRP) failed: %s\n",
+        Error("tty_process::winsize: ioctl(TIOCGPGRP) failed: %s\n",
             strerror(errno));
         return false;
     }
     if (kill(-pgrp, SIGWINCH) < 0) {
-        Error("cu_process::winsize: kill(%d,SIGWINCH) failed: %s\n",
+        Error("tty_process::winsize: kill(%d,SIGWINCH) failed: %s\n",
             -pgrp, strerror(errno));
     }
 

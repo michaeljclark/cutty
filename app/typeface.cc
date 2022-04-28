@@ -25,7 +25,7 @@
 #include "file.h"
 #include "ui9.h"
 
-#include "terminal.h"
+#include "teletype.h"
 #include "cellgrid.h"
 #include "typeface.h"
 
@@ -39,13 +39,13 @@ static const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
 static const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
 static const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
 
-uint cu_typeface_lookup_glyph(font_face *face, uint codepoint)
+uint tty_typeface_lookup_glyph(font_face *face, uint codepoint)
 {
     font_face_ft *fft = static_cast<font_face_ft*>(face);
     return FT_Get_Char_Index(fft->ftface, codepoint);
 }
 
-cu_font_metric cu_typeface_get_metrics(font_face *face, float font_size, int codepoint)
+tty_fontmetric tty_typeface_get_metrics(font_face *face, float font_size, int codepoint)
 {
     font_face_ft *fft = static_cast<font_face_ft*>(face);
     FT_Face ftface = fft->ftface;
@@ -76,7 +76,7 @@ cu_font_metric cu_typeface_get_metrics(font_face *face, float font_size, int cod
     float underline_thickness = ceilf(ftface->underline_thickness * scale * 4.0f) * 0.25f;
     float advance = roundf(ftglyph->advance.x / 64.0f * 4.0f) * 0.25f;
 
-    cu_font_metric m = {
+    tty_fontmetric m = {
         font_size, advance, leading, height,
         ascender, descender, underline_position, underline_thickness
     };
@@ -84,7 +84,7 @@ cu_font_metric cu_typeface_get_metrics(font_face *face, float font_size, int cod
     return m;
 }
 
-void cu_typeface_print_metrics(font_face *face, cu_font_metric m)
+void tty_typeface_print_metrics(font_face *face, tty_fontmetric m)
 {
     Debug("face=%s size=%f advance=%f leading=%f\n",
         face->name.c_str(), m.size, m.advance, m.leading);
@@ -94,7 +94,7 @@ void cu_typeface_print_metrics(font_face *face, cu_font_metric m)
         m.underline_position, m.underline_thickness);
 }
 
-void cu_typeface_init(cu_cellgrid *cg)
+void tty_typeface_init(tty_cellgrid *cg)
 {
     font_manager_ft *manager = cg->get_manager();
     /*
@@ -113,6 +113,6 @@ void cu_typeface_init(cu_cellgrid *cg)
     cg->mono1_bold = manager->findFontByPath(mono1_bold_font_path);
 
     /* measure font */
-    cg->fm = cu_typeface_get_metrics(cg->mono1_regular, cg->font_size, 'M');
-    cu_typeface_print_metrics(cg->mono1_regular, cg->fm);
+    cg->fm = tty_typeface_get_metrics(cg->mono1_regular, cg->font_size, 'M');
+    tty_typeface_print_metrics(cg->mono1_regular, cg->fm);
 }

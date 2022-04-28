@@ -1,13 +1,13 @@
 #pragma once
 
-enum cu_cellgrid_flag
+enum tty_cellgrid_flag
 {
-    cu_cellgrid_background = (1 << 0)
+    tty_cellgrid_background = (1 << 0)
 };
 
-struct cu_cellgrid
+struct tty_cellgrid
 {
-    cu_font_metric fm;
+    tty_fontmetric fm;
     uint cursor_color;
     uint background_color;
     const char* text_lang;
@@ -22,16 +22,16 @@ struct cu_cellgrid
     int flags;
     ssize_t vdelta;
 
-    virtual ~cu_cellgrid() = default;
+    virtual ~tty_cellgrid() = default;
 
-    virtual cu_winsize visible() = 0;
-    virtual cu_winsize draw(draw_list &batch) = 0;
+    virtual tty_winsize visible() = 0;
+    virtual tty_winsize draw(draw_list &batch) = 0;
 
     virtual font_manager_ft* get_manager() = 0;
-    virtual cu_term* get_terminal() = 0;
+    virtual tty_teletype* get_teletype() = 0;
     virtual MVGCanvas* get_canvas() = 0;
     virtual ui9::Root* get_root() = 0;
 };
 
-cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term,
+tty_cellgrid* tty_cellgrid_new(font_manager_ft *manager, tty_teletype *term,
                              bool test_mode = false);

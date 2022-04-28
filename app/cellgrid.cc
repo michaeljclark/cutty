@@ -26,13 +26,13 @@
 #include "ui9.h"
 #include "app.h"
 
-#include "terminal.h"
+#include "teletype.h"
 #include "cellgrid.h"
 #include "typeface.h"
 
-struct cu_cellgrid_ui9 : cu_cellgrid
+struct tty_cellgrid_ui9 : tty_cellgrid
 {
-    cu_term *term;
+    tty_teletype *tty;
     font_manager_ft *manager;
 
     ui9::Root root;
@@ -40,29 +40,29 @@ struct cu_cellgrid_ui9 : cu_cellgrid
     ui9::Scroller *vscroll;
     ui9::Scroller *hscroll;
 
-    cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool test_mode);
+    tty_cellgrid_ui9(font_manager_ft *manager, tty_teletype *tty, bool test_mode);
 
-    virtual cu_winsize visible();
-    virtual cu_winsize draw(draw_list &batch);
+    virtual tty_winsize visible();
+    virtual tty_winsize draw(draw_list &batch);
 
     virtual font_manager_ft* get_manager();
-    virtual cu_term* get_terminal();
+    virtual tty_teletype* get_teletype();
     virtual MVGCanvas* get_canvas();
     virtual ui9::Root* get_root();
 
     void scroll_event(ui9::axis_2D axis, float val);
 
-    font_face_ft* cell_font(cu_cell &cell);
-    cu_cell cell_col(cu_cell &cell);
-    cu_winsize draw_loop(int rows, int cols,
-        std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
-        std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
-        std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb);
+    font_face_ft* cell_font(tty_cell &cell);
+    tty_cell cell_col(tty_cell &cell);
+    tty_winsize draw_loop(int rows, int cols,
+        std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
+        std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
+        std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb);
 };
 
 
-cu_cellgrid_ui9::cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool test_mode)
-    : term(term), manager(manager), root(manager), canvas(manager)
+tty_cellgrid_ui9::tty_cellgrid_ui9(font_manager_ft *manager, tty_teletype *tty, bool test_mode)
+    : tty(tty), manager(manager), root(manager), canvas(manager)
 {
     if (test_mode) {
         width = 1200;
@@ -87,7 +87,7 @@ cu_cellgrid_ui9::cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool t
     cursor_color = 0x40000000;
     text_lang = "en";
     rscale = 1.0f;
-    flags = cu_cellgrid_background;
+    flags = tty_cellgrid_background;
     vdelta = 0;
 
     vscroll = new ui9::Scroller();
@@ -104,27 +104,27 @@ cu_cellgrid_ui9::cu_cellgrid_ui9(font_manager_ft *manager, cu_term *term, bool t
     });
     root.add_child(hscroll);
 
-    cu_typeface_init(this);
+    tty_typeface_init(this);
 }
 
-cu_cellgrid* cu_cellgrid_new(font_manager_ft *manager, cu_term *term, bool test_mode)
+tty_cellgrid* tty_cellgrid_new(font_manager_ft *manager, tty_teletype *tty, bool test_mode)
 {
-    return new cu_cellgrid_ui9(manager, term, test_mode);
+    return new tty_cellgrid_ui9(manager, tty, test_mode);
 }
 
-font_manager_ft* cu_cellgrid_ui9::get_manager() { return manager; }
-cu_term* cu_cellgrid_ui9::get_terminal() { return term; }
-MVGCanvas* cu_cellgrid_ui9::get_canvas() { return &canvas; }
-ui9::Root* cu_cellgrid_ui9::get_root() { return &root; }
+font_manager_ft* tty_cellgrid_ui9::get_manager() { return manager; }
+tty_teletype* tty_cellgrid_ui9::get_teletype() { return tty; }
+MVGCanvas* tty_cellgrid_ui9::get_canvas() { return &canvas; }
+ui9::Root* tty_cellgrid_ui9::get_root() { return &root; }
 
-font_face_ft* cu_cellgrid_ui9::cell_font(cu_cell &cell)
+font_face_ft* tty_cellgrid_ui9::cell_font(tty_cell &cell)
 {
     font_face *face;
 
     if (cell.codepoint >= 0x1f000 && cell.codepoint <= 0x1ffff) {
         face = mono1_emoji;
     }
-    else if (cell.flags & cu_cell_bold) {
+    else if (cell.flags & tty_cell_bold) {
         face = mono1_bold;
     }
     else {
@@ -134,40 +134,40 @@ font_face_ft* cu_cellgrid_ui9::cell_font(cu_cell &cell)
     return static_cast<font_face_ft*>(face);
 }
 
-cu_cell cu_cellgrid_ui9::cell_col(cu_cell &cell)
+tty_cell tty_cellgrid_ui9::cell_col(tty_cell &cell)
 {
     uint fg = cell.fg;
     uint bg = cell.bg;
 
-    if ((cell.flags & cu_cell_faint) > 0) {
+    if ((cell.flags & tty_cell_faint) > 0) {
         color col = color(cell.fg);
         col = col.blend(color(0.5f,0.5f,0.5f,1.f), 0.5f);
         fg = col.rgba32();
     }
 
-    if ((cell.flags & cu_cell_inverse) > 0) {
-        return cu_cell{ 0, 0, bg, fg };
+    if ((cell.flags & tty_cell_inverse) > 0) {
+        return tty_cell{ 0, 0, bg, fg };
     } else {
-        return cu_cell{ 0, 0, fg, bg };
+        return tty_cell{ 0, 0, fg, bg };
     }
 }
 
-cu_winsize cu_cellgrid_ui9::visible()
+tty_winsize tty_cellgrid_ui9::visible()
 {
     /* vis_lines == vis_rows initially */
     int vis_rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
     int vis_cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
-    return cu_winsize { vis_rows, vis_rows, vis_cols };
+    return tty_winsize { vis_rows, vis_rows, vis_cols };
 }
 
-cu_winsize cu_cellgrid_ui9::draw_loop(int rows, int cols,
-    std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
-    std::function<void(cu_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
-    std::function<void(cu_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
+tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
+    std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
+    std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
+    std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
     int wrap_count = 0;
-    bool wrap_enabled = (term->flags & cu_flag_DECAWM) > 0;
-    ssize_t tot_lines = wrap_enabled ? term->voffsets.size() : term->lines.size();
+    bool wrap_enabled = (tty->flags & tty_flag_DECAWM) > 0;
+    ssize_t tot_lines = wrap_enabled ? tty->voffsets.size() : tty->lines.size();
 
     for (ssize_t j = tot_lines - 1 - vdelta, l = 0; l < rows; j--, l++)
     {
@@ -175,10 +175,10 @@ cu_winsize cu_cellgrid_ui9::draw_loop(int rows, int cols,
         if (j < 0) break;
 
         size_t k, o;
-        cu_line line;
+        tty_line line;
 
         if (wrap_enabled) {
-            cu_line_voff voff = term->voffsets[j];
+            tty_line_voff voff = tty->voffsets[j];
             k = voff.lline;
             o = voff.offset;
             if (o > 0) wrap_count++;
@@ -187,29 +187,29 @@ cu_winsize cu_cellgrid_ui9::draw_loop(int rows, int cols,
             o = 0;
         }
 
-        line = term->lines[k];
+        line = tty->lines[k];
         line.unpack();
         size_t limit = std::min(o + cols, line.count());
         linepre_cb(line, k, l, o, o);
         for (size_t i = o; i < limit; i++) {
-            cu_cell &cell = line.cells[i];
+            tty_cell &cell = line.cells[i];
             cell_cb(cell, k, l, o, i);
         }
         linepost_cb(line, k, l, o, limit);
     }
 
-    return cu_winsize{
+    return tty_winsize{
         rows - wrap_count, rows, cols,
         (int)width, (int)height
     };
 }
 
-cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
+tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
 {
     text_renderer_ft renderer(manager, rscale);
     std::vector<glyph_shape> shapes;
 
-    cu_term_update_offsets(term);
+    tty_update_offsets(tty);
 
     int rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
     int cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
@@ -217,7 +217,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
     int advance_x = (int)(fm.advance * 64.0f);
     float glyph_height = fm.height - fm.descender;
     float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
-    int clrow = term->cur_row, clcol = term->cur_col;
+    int clrow = tty->cur_row, clcol = tty->cur_col;
     float ox = margin, oy = height - margin;
 
     auto render_block = [&](int row, int col, int h, int w, uint c)
@@ -264,7 +264,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 
     /* render border */
 
-    if ((flags & cu_cellgrid_background) > 0) {
+    if ((flags & tty_cellgrid_background) > 0) {
         color white = color(1.0f, 1.0f, 1.0f, 1.0f);
         color black = color(0.0f, 0.0f, 0.0f, 1.0f);
         float w = 2.0f, m = margin/2.f + w;
@@ -280,7 +280,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 
     /* render background colors */
 
-    cu_winsize dim = draw_loop(rows, cols,
+    tty_winsize dim = draw_loop(rows, cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
             uint bg = cell_col(cell).bg;
@@ -295,7 +295,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
             font_face_ft *face = cell_font(cell);
-            uint glyph = cu_typeface_lookup_glyph(face, cell.codepoint);
+            uint glyph = tty_typeface_lookup_glyph(face, cell.codepoint);
             shapes.push_back({
                 glyph, (unsigned)o, 0, 0, advance_x, 0, cell_col(cell).fg
             });
@@ -317,7 +317,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
             lfg = fg = 0;
         },
         [&] (auto cell, auto k, auto l, auto o, auto i) {
-            under = (cell.flags & cu_cell_underline) > 0;
+            under = (cell.flags & tty_cell_underline) > 0;
             fg = cell_col(cell).fg;
             if ((i-o)-lounder > 0 && (under != lunder || fg != lfg)) {
                 if (lunder) render_underline(l, lounder, (i-o)-lounder, lfg);
@@ -339,7 +339,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 
     /* render cursor */
 
-    if ((term->flags & cu_flag_DECTCEM) > 0) {
+    if ((tty->flags & tty_flag_DECTCEM) > 0) {
         draw_loop(rows, cols,
             [&] (auto line, auto k, auto l, auto o, auto i) {
                 if (clrow == k && clcol >= o && clcol < o + cols) {
@@ -355,7 +355,7 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
 
     /* render scrollbars */
 
-    if ((flags & cu_cellgrid_background) > 0)
+    if ((flags & tty_cellgrid_background) > 0)
     {
         vscroll->set_visible(true);
         vscroll->set_position({width-20, height/2, 0});
@@ -372,11 +372,11 @@ cu_winsize cu_cellgrid_ui9::draw(draw_list &batch)
     return dim;
 }
 
-void cu_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
+void tty_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
 {
-    ssize_t vis_lines = term->vis_lines;
-    bool wrap_enabled = (term->flags & cu_flag_DECAWM) > 0;
-    ssize_t tot_lines = wrap_enabled ? term->voffsets.size() : term->lines.size();;
+    ssize_t vis_lines = tty->vis_lines;
+    bool wrap_enabled = (tty->flags & tty_flag_DECAWM) > 0;
+    ssize_t tot_lines = wrap_enabled ? tty->voffsets.size() : tty->lines.size();;
     ssize_t vrange = tot_lines - vis_lines > 0 ? tot_lines - vis_lines : 0;
 
     switch (axis) {

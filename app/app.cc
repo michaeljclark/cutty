@@ -27,21 +27,20 @@
 #include "ui9.h"
 #include "app.h"
 
-#include "terminal.h"
+#include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"
 #include "render.h"
-//#include "ui.h"
 
 using namespace std::chrono;
 
 /* globals */
 
 static font_manager_ft manager;
-static std::unique_ptr<cu_term> term;
-static std::unique_ptr<cu_cellgrid> cg;
-static std::unique_ptr<cu_render> render;
-static std::unique_ptr<cu_process> process;
+static std::unique_ptr<tty_teletype> tty;
+static std::unique_ptr<tty_cellgrid> cg;
+static std::unique_ptr<tty_render> render;
+static std::unique_ptr<tty_process> process;
 static GLFWwindow* window;
 static vec2 mouse_pos;
 
@@ -60,7 +59,7 @@ static std::vector<const char*> exec_vec;
 
 static void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    cu_term_keyboard(term.get(), key, scancode, action, mods);
+    tty_keyboard(tty.get(), key, scancode, action, mods);
 }
 
 /* mouse callbacks */
@@ -107,7 +106,7 @@ static void cursor_position(GLFWwindow* window, double xpos, double ypos)
     mouse_pos = vec2(xpos, ypos);
 
     if (mouse_motion_ui9(vec3(mouse_pos, 1))) {
-        term->needs_update = 1;
+        tty->needs_update = 1;
         return;
     }
 }
@@ -129,11 +128,11 @@ static void reshape()
 
 static void framebuffer_size(GLFWwindow* window, int w, int h)
 {
-    term->needs_update = 1;
+    tty->needs_update = 1;
     reshape();
-    cu_winsize dim = render->update();
+    tty_winsize dim = render->update();
     if (process->winsize(dim)) {
-        cu_term_set_dim(term.get(), dim);
+        tty_set_dim(tty.get(), dim);
     }
     render->display();
     glfwSwapBuffers(window);
@@ -155,17 +154,17 @@ static void window_size(GLFWwindow* window, int w, int h)
     //printf("%s: w=%d h=%d\n", __func__, w, h);
 }
 
-static void cu_term_app(int argc, char **argv)
+static void tty_app(int argc, char **argv)
 {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, CTX_OPENGL_MAJOR);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, CTX_OPENGL_MINOR);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);
 
-    term = std::unique_ptr<cu_term>(cu_term_new());
-    cg = std::unique_ptr<cu_cellgrid>(cu_cellgrid_new(&manager, term.get()));
-    render = std::unique_ptr<cu_render>(cu_render_new(&manager, cg.get()));
-    process = std::unique_ptr<cu_process>(cu_process_new());
+    tty = std::unique_ptr<tty_teletype>(tty_new());
+    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get()));
+    render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
+    process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
 
     window = glfwCreateWindow((int)cg->width, (int)cg->height, argv[0], NULL, NULL);
@@ -184,31 +183,31 @@ static void cu_term_app(int argc, char **argv)
     render->initialize();
     reshape();
 
-    cu_winsize dim = cg->visible();
-    cu_term_set_dim(term.get(), dim);
-    cu_term_reset(term.get());
+    tty_winsize dim = cg->visible();
+    tty_set_dim(tty.get(), dim);
+    tty_reset(tty.get());
 
     int fd = process->exec(dim, exec_path, exec_argv);
-    cu_term_set_fd(term.get(), fd);
+    tty_set_fd(tty.get(), fd);
 
     while (!glfwWindowShouldClose(window)) {
-        cu_winsize dim = render->update();
+        tty_winsize dim = render->update();
         if (process->winsize(dim)) {
-            cu_term_set_dim(term.get(), dim);
+            tty_set_dim(tty.get(), dim);
         }
         render->display();
         glfwSwapBuffers(window);
         glfwPollEvents();
-        do if (cu_term_io(term.get()) < 0) {
+        do if (tty_io(tty.get()) < 0) {
             glfwSetWindowShouldClose(window, 1);
         }
-        while (cu_term_process(term.get()) > 0);
+        while (tty_proc(tty.get()) > 0);
     }
 
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    cu_term_close(term.get());
+    tty_close(tty.get());
 }
 
 /* help text */
@@ -298,7 +297,7 @@ void parse_options(int argc, char **argv)
 static int app_main(int argc, char** argv)
 {
     parse_options(argc, argv);
-    cu_term_app(argc, argv);
+    tty_app(argc, argv);
 
     return 0;
 }

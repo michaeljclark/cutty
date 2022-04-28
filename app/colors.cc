@@ -2,7 +2,7 @@ typedef unsigned int uint;
 
 #define RGB(r, g, b) (((uint)r << 0) | ((uint)g << 8) | ((uint)b << 16) | ((uint)0xff << 24))
 
-uint cu_term_colors_256[256] =
+uint tty_colors_256[256] =
 {
     RGB(0,0,0),
     RGB(128,0,0),

@@ -1,14 +1,14 @@
 #pragma once
 
-struct cu_process
+struct tty_process
 {
-	cu_winsize zws;
+	tty_winsize zws;
 	int pid;
 	int fd;
 	char device[PATH_MAX];
 
-	int exec(cu_winsize zws, const char *path, const char *const argv[]);
-	bool winsize(cu_winsize zws);
+	int exec(tty_winsize zws, const char *path, const char *const argv[]);
+	bool winsize(tty_winsize zws);
 };
 
-cu_process* cu_process_new();
+tty_process* tty_process_new();

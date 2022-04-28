@@ -28,18 +28,26 @@
 #include "ui9.h"
 #include "app.h"
 
-#include "terminal.h"
+#include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"
 #include "render.h"
 
 using namespace std::chrono;
 
-struct cu_render_opengl : cu_render
+struct circular_buffer
+{
+    llong sum;
+    llong count;
+    llong offset;
+    llong samples[31];
+};
+
+struct tty_render_opengl : tty_render
 {
 	font_manager_ft *manager;
-	cu_cellgrid *cg;
-	cu_winsize dim;
+	tty_cellgrid *cg;
+	tty_winsize dim;
 	circular_buffer frame_times;
 	texture_buffer shape_tb;
 	texture_buffer edge_tb;
@@ -58,12 +66,12 @@ struct cu_render_opengl : cu_render
 	//MVGCanvas canvas;
 	bool overlay_stats;
 
-	cu_render_opengl(font_manager_ft *manager, cu_cellgrid *cg);
-	virtual ~cu_render_opengl();
+	tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg);
+	virtual ~tty_render_opengl();
 
 	virtual void set_overlay(bool val);
 
-	virtual cu_winsize update();
+	virtual tty_winsize update();
 	virtual void display();
 	virtual void reshape(int width, int height, float scale);
 	virtual void initialize();
@@ -76,7 +84,7 @@ protected:
 	void update_uniforms(program *prog);
 };
 
-cu_render_opengl::cu_render_opengl(font_manager_ft *manager, cu_cellgrid *cg)
+tty_render_opengl::tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg)
 : manager(manager), cg(cg), frame_times{},
   shape_tb(), edge_tb(), brush_tb(),
   prog_flat(), prog_texture(), prog_msdf(), prog_canvas(),
@@ -85,11 +93,11 @@ cu_render_opengl::cu_render_opengl(font_manager_ft *manager, cu_cellgrid *cg)
   //canvas(manager), /* ui(manager, &canvas), */
   overlay_stats(false) {}
 
-cu_render_opengl::~cu_render_opengl() {}
+tty_render_opengl::~tty_render_opengl() {}
 
-cu_render* cu_render_new(font_manager_ft *manager, cu_cellgrid *cg)
+tty_render* tty_render_new(font_manager_ft *manager, tty_cellgrid *cg)
 {
-	return new cu_render_opengl(manager, cg);
+	return new tty_render_opengl(manager, cg);
 }
 
 static void circular_buffer_add(circular_buffer *buffer, llong new_value)
@@ -117,9 +125,9 @@ static long circular_buffer_average(circular_buffer *buffer)
     }
 }
 
-void cu_render_opengl::set_overlay(bool val) { overlay_stats = val; }
+void tty_render_opengl::set_overlay(bool val) { overlay_stats = val; }
 
-std::vector<std::string> cu_render_opengl::get_stats()
+std::vector<std::string> tty_render_opengl::get_stats()
 {
     std::vector<std::string> stats;
     stats.push_back(format("FPS: %4.1f",
@@ -127,7 +135,7 @@ std::vector<std::string> cu_render_opengl::get_stats()
     return stats;
 }
 
-void cu_render_opengl::render_stats(draw_list &batch)
+void tty_render_opengl::render_stats(draw_list &batch)
 {
     text_shaper_hb shaper;
     text_renderer_ft renderer(manager, cg->rscale);
@@ -150,11 +158,11 @@ void cu_render_opengl::render_stats(draw_list &batch)
     }
 }
 
-cu_winsize cu_render_opengl::update()
+tty_winsize tty_render_opengl::update()
 {
     static ullong tl, tn;
 
-    if (!cg->get_terminal()->needs_update) return dim;
+    if (!cg->get_teletype()->needs_update) return dim;
 
     auto now = high_resolution_clock::now();
     tn = duration_cast<nanoseconds>(now.time_since_epoch()).count();
@@ -181,12 +189,12 @@ cu_winsize cu_render_opengl::update()
     vertex_buffer_create("vbo", &vbo, GL_ARRAY_BUFFER, batch.vertices);
     vertex_buffer_create("ibo", &ibo, GL_ELEMENT_ARRAY_BUFFER, batch.indices);
 
-    cg->get_terminal()->needs_update = 0;
+    cg->get_teletype()->needs_update = 0;
 
     return dim;
 }
 
-program* cu_render_opengl::cmd_shader_gl(int cmd_shader)
+program* tty_render_opengl::cmd_shader_gl(int cmd_shader)
 {
     switch (cmd_shader) {
     case shader_flat:    return &prog_flat;
@@ -197,7 +205,7 @@ program* cu_render_opengl::cmd_shader_gl(int cmd_shader)
     }
 }
 
-void cu_render_opengl::display()
+void tty_render_opengl::display()
 {
     /* okay, lets send commands to the GPU */
     color bg(cg->background_color);
@@ -232,7 +240,7 @@ void cu_render_opengl::display()
     }
 }
 
-void cu_render_opengl::update_uniforms(program *prog)
+void tty_render_opengl::update_uniforms(program *prog)
 {
     uniform_matrix_4fv(prog, "u_mvp", (const GLfloat *)&mvp[0][0]);
     uniform_1i(prog, "u_tex0", 0);
@@ -241,7 +249,7 @@ void cu_render_opengl::update_uniforms(program *prog)
     uniform_1i(prog, "tb_brush", 2);
 }
 
-void cu_render_opengl::reshape(int width, int height, float scale)
+void tty_render_opengl::reshape(int width, int height, float scale)
 {
     cg->width = (float)width;
     cg->height = (float)height;
@@ -262,7 +270,7 @@ void cu_render_opengl::reshape(int width, int height, float scale)
     update_uniforms(&prog_texture);
 }
 
-void cu_render_opengl::initialize()
+void tty_render_opengl::initialize()
 {
     GLuint flat_fsh, texture_fsh, msdf_fsh, canvas_fsh, vsh;
 

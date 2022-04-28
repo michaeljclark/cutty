@@ -1,3 +1,3 @@
 #pragma once
 
-extern uint cu_term_colors_256[256];
+extern uint tty_colors_256[256];
