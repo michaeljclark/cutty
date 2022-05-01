@@ -205,11 +205,10 @@ struct tty_teletype
 	std::vector<tty_line> lines;
 	std::vector<tty_line_voff> voffsets;
 	std::vector<tty_line_loff> loffsets;
-	llong min_row;
+	tty_winsize ws;
 	llong cur_row;
 	llong cur_col;
-	llong vis_rows;
-	llong vis_cols;
+	llong min_row;
 	llong top_marg;
 	llong bot_marg;
 };
@@ -217,7 +216,8 @@ struct tty_teletype
 tty_teletype* tty_new();
 void tty_close(tty_teletype *tty);
 void tty_set_fd(tty_teletype *tty, int fd);
-void tty_set_dim(tty_teletype *tty, tty_winsize dim);
+tty_winsize tty_get_winsize(tty_teletype *tty);
+void tty_set_winsize(tty_teletype *tty, tty_winsize dim);
 void tty_update_offsets(tty_teletype *t);
 void tty_reset(tty_teletype *tty);
 tty_line_voff tty_visible_to_logical(tty_teletype *tty, llong vline);

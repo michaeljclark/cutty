@@ -67,6 +67,7 @@ tty_teletype* tty_new()
     t->out_end = 0;
 
     t->lines.push_back(tty_line{});
+    t->ws = { 0, 0, 0, 0};
     t->min_row = 0;
     t->cur_row = 0;
     t->cur_col = 0;
@@ -197,7 +198,7 @@ void tty_line::clear()
 void tty_update_offsets(tty_teletype *t)
 {
     bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
-    size_t cols = t->vis_cols;
+    size_t cols = t->ws.vis_cols;
     size_t vlstart, vl;
 
     if (!wrap_enabled) {
@@ -277,13 +278,13 @@ llong tty_total_lines(tty_teletype *t)
 
 llong tty_visible_rows(tty_teletype *t)
 {
-    return t->vis_rows;
+    return t->ws.vis_rows;
 }
 
 llong tty_visible_lines(tty_teletype *t)
 {
     bool wrap_enabled = (t->flags & tty_flag_DECAWM) > 0;
-    llong rows = t->vis_rows;
+    llong rows = t->ws.vis_rows;
 
     if (wrap_enabled) {
         /*
@@ -303,11 +304,17 @@ llong tty_visible_lines(tty_teletype *t)
     }
 }
 
-void tty_set_dim(tty_teletype *t, tty_winsize d)
+tty_winsize tty_get_winsize(tty_teletype *t)
 {
-    t->vis_rows = d.vis_rows;
-    t->vis_cols = d.vis_cols;
-    t->min_row = 0;
+    return t->ws;
+}
+
+void tty_set_winsize(tty_teletype *t, tty_winsize d)
+{
+    if (t->ws != d) {
+        t->ws = d;
+        t->min_row = 0;
+    }
 }
 
 static void tty_set_row(tty_teletype *t, llong row)
@@ -439,8 +446,8 @@ static void tty_insert_lines(tty_teletype *t, uint arg)
     // consider line editing mode: *following*, or preceding
     // consider bottom margin for following mode. add bounds checks
     llong top = t->top_marg == 0 ? 1           : t->top_marg;
-    llong bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
-    llong scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
+    llong bot = t->bot_marg == 0 ? t->ws.vis_rows : t->bot_marg;
+    llong scrolloff = bot < t->ws.vis_rows ? t->ws.vis_rows - bot : 0;
     t->lines[t->cur_row].pack();
     for (uint i = 0; i < arg; i++) {
         t->lines.insert(t->lines.begin() + t->cur_row, tty_line{});
@@ -457,8 +464,8 @@ static void tty_delete_lines(tty_teletype *t, uint arg)
     // consider line editing mode: *following*, or preceding
     // consider bottom margin for following mode. add bounds checks
     llong top = t->top_marg == 0 ? 1           : t->top_marg;
-    llong bot = t->bot_marg == 0 ? t->vis_rows : t->bot_marg;
-    llong scrolloff = bot < t->vis_rows ? t->vis_rows - bot : 0;
+    llong bot = t->bot_marg == 0 ? t->ws.vis_rows : t->bot_marg;
+    llong scrolloff = bot < t->ws.vis_rows ? t->ws.vis_rows - bot : 0;
     t->lines[t->cur_row].pack();
     for (uint i = 0; i < arg; i++) {
         if (t->cur_row < t->lines.size()) {

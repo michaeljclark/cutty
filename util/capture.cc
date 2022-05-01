@@ -105,10 +105,10 @@ static void capture_app(int argc, char **argv)
     osmesa_init((uint)cg->width, (uint)cg->height);
 
     render->initialize();
-    render->reshape(cg->width, cg->height, 1.f/cg->rscale);
+    render->reshape(cg->width, cg->height);
 
-    tty_winsize dim = cg->visible();
-    tty_set_dim(term.get(), dim);
+    tty_winsize dim = cg->get_winsize();
+    tty_set_winsize(term.get(), dim);
     tty_reset(term.get());
 
     int fd = process->exec(dim, exec_path, exec_argv);
@@ -116,7 +116,7 @@ static void capture_app(int argc, char **argv)
 
     uint running = 1;
     while (running) {
-        process->winsize(render->update());
+        render->update();
         render->display();
         glFlush();
         if (term->needs_capture) {

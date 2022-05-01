@@ -6,9 +6,9 @@ struct tty_render
 
 	virtual void set_overlay(bool val) = 0;
 
-	virtual tty_winsize update() = 0;
+	virtual void update() = 0;
 	virtual void display() = 0;
-	virtual void reshape(int width, int height, float scale) = 0;
+	virtual void reshape(int width, int height) = 0;
 	virtual void initialize() = 0;
 };
 

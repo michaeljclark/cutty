@@ -47,7 +47,6 @@ struct tty_render_opengl : tty_render
 {
 	font_manager_ft *manager;
 	tty_cellgrid *cg;
-	tty_winsize dim;
 	circular_buffer frame_times;
 	texture_buffer shape_tb;
 	texture_buffer edge_tb;
@@ -62,8 +61,6 @@ struct tty_render_opengl : tty_render
 	std::map<int,GLuint> tex_map;
 	draw_list batch;
 	mat4 mvp;
-	//AContext ctx;
-	//MVGCanvas canvas;
 	bool overlay_stats;
 
 	tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg);
@@ -71,9 +68,9 @@ struct tty_render_opengl : tty_render
 
 	virtual void set_overlay(bool val);
 
-	virtual tty_winsize update();
+	virtual void update();
 	virtual void display();
-	virtual void reshape(int width, int height, float scale);
+	virtual void reshape(int width, int height);
 	virtual void initialize();
 
 protected:
@@ -158,11 +155,11 @@ void tty_render_opengl::render_stats(draw_list &batch)
     }
 }
 
-tty_winsize tty_render_opengl::update()
+void tty_render_opengl::update()
 {
     static ullong tl, tn;
 
-    if (!cg->get_teletype()->needs_update) return dim;
+    if (!cg->get_teletype()->needs_update) return;
 
     auto now = high_resolution_clock::now();
     tn = duration_cast<nanoseconds>(now.time_since_epoch()).count();
@@ -173,7 +170,7 @@ tty_winsize tty_render_opengl::update()
     draw_list_clear(batch);
 
     /* draw terminal cellgrid */
-    dim = cg->draw(batch);
+    cg->draw(batch);
 
     /* render stats text */
     if (overlay_stats) {
@@ -190,8 +187,6 @@ tty_winsize tty_render_opengl::update()
     vertex_buffer_create("ibo", &ibo, GL_ELEMENT_ARRAY_BUFFER, batch.indices);
 
     cg->get_teletype()->needs_update = 0;
-
-    return dim;
 }
 
 program* tty_render_opengl::cmd_shader_gl(int cmd_shader)
@@ -249,12 +244,8 @@ void tty_render_opengl::update_uniforms(program *prog)
     uniform_1i(prog, "tb_brush", 2);
 }
 
-void tty_render_opengl::reshape(int width, int height, float scale)
+void tty_render_opengl::reshape(int width, int height)
 {
-    cg->width = (float)width;
-    cg->height = (float)height;
-    cg->rscale = 1.f/scale;
-
     mvp = glm::ortho(0.0f, cg->width, cg->height, 0.0f, 0.0f, 100.0f);
 
     glUseProgram(prog_canvas.pid);

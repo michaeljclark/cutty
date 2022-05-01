@@ -42,8 +42,8 @@ struct tty_cellgrid_ui9 : tty_cellgrid
 
     tty_cellgrid_ui9(font_manager_ft *manager, tty_teletype *tty, bool test_mode);
 
-    virtual tty_winsize visible();
-    virtual tty_winsize draw(draw_list &batch);
+    virtual tty_winsize get_winsize();
+    virtual void draw(draw_list &batch);
 
     virtual font_manager_ft* get_manager();
     virtual tty_teletype* get_teletype();
@@ -54,7 +54,7 @@ struct tty_cellgrid_ui9 : tty_cellgrid
 
     font_face_ft* cell_font(tty_cell &cell);
     tty_cell cell_col(tty_cell &cell);
-    tty_winsize draw_loop(int rows, int cols,
+    void draw_loop(int rows, int cols,
         std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
         std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
         std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb);
@@ -77,10 +77,10 @@ tty_cellgrid_ui9::tty_cellgrid_ui9(font_manager_ft *manager, tty_teletype *tty, 
             font_size = 12.5f;
             margin = 15.0f;
         #else
-            width = 1260;
-            height = 860;
+            width = 1230;
+            height = 850;
             font_size = 25.0f;
-            margin = 30.0f;
+            margin = 15.0f;
         #endif
         background_color = 0xffe8e8e8;
     }
@@ -153,14 +153,14 @@ tty_cell tty_cellgrid_ui9::cell_col(tty_cell &cell)
     }
 }
 
-tty_winsize tty_cellgrid_ui9::visible()
+tty_winsize tty_cellgrid_ui9::get_winsize()
 {
-    int vis_rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
-    int vis_cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
-    return tty_winsize { vis_rows, vis_cols, (int)width, (int)height };
+    int rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
+    int cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
+    return tty_winsize { rows, cols, (int)width, (int)height };
 }
 
-tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
+void tty_cellgrid_ui9::draw_loop(int rows, int cols,
     std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
     std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
     std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
@@ -184,21 +184,17 @@ tty_winsize tty_cellgrid_ui9::draw_loop(int rows, int cols,
         }
         linepost_cb(line, k, l, o, limit);
     }
-
-    return tty_winsize{
-        rows, cols, (int)width, (int)height
-    };
 }
 
-tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
+void tty_cellgrid_ui9::draw(draw_list &batch)
 {
     text_renderer_ft renderer(manager, rscale);
     std::vector<glyph_shape> shapes;
 
     tty_update_offsets(tty);
 
-    int rows = (int)std::max(0.f, height - margin*2.f) / fm.leading;
-    int cols = (int)std::max(0.f, width  - margin*2.f) / fm.advance;
+    tty_winsize ws = get_winsize();
+    int rows = ws.vis_rows, cols = ws.vis_cols;
     int font_size = (int)(fm.size * 64.0f);
     int advance_x = (int)(fm.advance * 64.0f);
     float glyph_height = fm.height - fm.descender;
@@ -246,7 +242,7 @@ tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
     canvas.set_transform(mat3(s,  0,  0,
                                   0,  s,  0,
                                   0,  0,  1));
-    canvas.set_scale(rscale);
+    canvas.set_scale(0.5f);
 
     /* render border */
 
@@ -266,7 +262,7 @@ tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
 
     /* render background colors */
 
-    tty_winsize dim = draw_loop(rows, cols,
+    draw_loop(rows, cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
             uint bg = cell_col(cell).bg;
@@ -354,8 +350,6 @@ tty_winsize tty_cellgrid_ui9::draw(draw_list &batch)
         root.layout(&canvas);
         canvas.emit(batch);
     }
-
-    return dim;
 }
 
 void tty_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)

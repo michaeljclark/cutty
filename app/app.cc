@@ -123,17 +123,26 @@ static void reshape()
     float scale = sqrtf((float)(framebuffer_width * framebuffer_height) /
                        (float)(window_width * window_height));
 
-    render->reshape(window_width, window_height, scale);
+    render->reshape(window_width, window_height);
+
+    cg->width = (float)window_width;   /* ideally this becomes framebuffer */
+    cg->height = (float)window_height; /* width * height and display scale */
+    cg->rscale = 1.0f/scale;
+
+    tty_winsize dim = cg->get_winsize();
+    tty_winsize ldim = tty_get_winsize(tty.get());
+    if (dim != ldim) {
+        tty_set_winsize(tty.get(), dim);
+        process->winsize(dim);
+    }
 }
 
 static void framebuffer_size(GLFWwindow* window, int w, int h)
 {
     tty->needs_update = 1;
+
     reshape();
-    tty_winsize dim = render->update();
-    if (process->winsize(dim)) {
-        tty_set_dim(tty.get(), dim);
-    }
+    render->update();
     render->display();
     glfwSwapBuffers(window);
 }
@@ -180,21 +189,25 @@ static void tty_app(int argc, char **argv)
     glfwSetWindowPosCallback(window, window_pos);
     glfwSetWindowSizeCallback(window, window_size);
 
-    render->initialize();
-    reshape();
+    int framebuffer_width, framebuffer_height;
+    int window_width, window_height;
+    glfwGetWindowSize(window, &window_width, &window_height);
+    glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
+    float scale = sqrtf((float)(framebuffer_width * framebuffer_height) /
+                       (float)(window_width * window_height));
 
-    tty_winsize dim = cg->visible();
-    tty_set_dim(tty.get(), dim);
+    render->initialize();
+
+    reshape();
+    tty_winsize dim = cg->get_winsize();
+    tty_set_winsize(tty.get(), dim);
     tty_reset(tty.get());
 
     int fd = process->exec(dim, exec_path, exec_argv);
     tty_set_fd(tty.get(), fd);
 
     while (!glfwWindowShouldClose(window)) {
-        tty_winsize dim = render->update();
-        if (process->winsize(dim)) {
-            tty_set_dim(tty.get(), dim);
-        }
+        render->update();
         render->display();
         glfwSwapBuffers(window);
         glfwPollEvents();

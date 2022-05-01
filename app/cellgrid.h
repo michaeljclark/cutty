@@ -25,8 +25,8 @@ struct tty_cellgrid
 
     virtual ~tty_cellgrid() = default;
 
-    virtual tty_winsize visible() = 0;
-    virtual tty_winsize draw(draw_list &batch) = 0;
+    virtual tty_winsize get_winsize() = 0;
+    virtual void draw(draw_list &batch) = 0;
 
     virtual font_manager_ft* get_manager() = 0;
     virtual tty_teletype* get_teletype() = 0;
