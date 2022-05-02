@@ -165,13 +165,13 @@ void tty_cellgrid_ui9::draw_loop(int rows, int cols,
     std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
     std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
 {
-    llong total_rows = tty_total_rows(tty);
+    llong total_rows = tty->total_rows();
 
     for (llong j = total_rows - 1 - scroll_row, l = 0; l < rows && j >= 0; j--, l++)
     {
         if (j >= total_rows) continue;
 
-        tty_line_voff voff = tty_visible_to_logical(tty, j);
+        tty_line_voff voff = tty->visible_to_logical(j);
         size_t k = voff.lline, o = voff.offset;
         tty_line line = tty->lines[k];
         size_t limit = std::min(o + cols, line.count());
@@ -191,7 +191,7 @@ void tty_cellgrid_ui9::draw(draw_list &batch)
     text_renderer_ft renderer(manager, rscale);
     std::vector<glyph_shape> shapes;
 
-    tty_update_offsets(tty);
+    tty->update_offsets();
 
     tty_winsize ws = get_winsize();
     int rows = ws.vis_rows, cols = ws.vis_cols;
@@ -355,8 +355,8 @@ void tty_cellgrid_ui9::draw(draw_list &batch)
 void tty_cellgrid_ui9::scroll_event(ui9::axis_2D axis, float val)
 {
     bool wrap_enabled = (tty->flags & tty_flag_DECAWM) > 0;
-    llong visible_rows = tty_visible_rows(tty);
-    llong total_rows = tty_total_rows(tty);
+    llong visible_rows = tty->visible_rows();
+    llong total_rows = tty->total_rows();
     llong vrange = total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
 
     switch (axis) {

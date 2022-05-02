@@ -183,15 +183,15 @@ struct tty_line_loff { size_t vline, count; };
 struct tty_teletype
 {
 	uint state;
-	uint code;
 	uint flags;
 	uint charset;
+	uint code;
 	uint argc;
 	uint argv[5];
 	uint fd;
 	uchar needs_update;
 	uchar needs_capture;
-	std::string osc_string;
+	std::string osc_data;
 
 	std::vector<uchar> in_buf;
 	ssize_t in_start;
@@ -211,22 +211,60 @@ struct tty_teletype
 	llong min_row;
 	llong top_marg;
 	llong bot_marg;
+
+	tty_teletype();
+
+	void close();
+	void update_offsets();
+	tty_line_voff visible_to_logical(llong vline);
+	tty_line_loff logical_to_visible(llong lline);
+	llong total_rows();
+	llong total_lines();
+	llong visible_rows();
+	llong visible_lines();
+	tty_winsize get_winsize();
+	void set_winsize(tty_winsize dim);
+	void set_fd(int fd);
+	void reset();
+	ssize_t io();
+	ssize_t proc();
+	ssize_t write(const char *buf, size_t len);
+	void keyboard(int key, int scancode, int action, int mods);
+
+protected:
+	std::string args_str();
+	int opt_arg(int arg, int opt);
+	void send(uint c);
+	void xtwinops();
+	void set_row(llong row);
+	void set_col(llong col);
+	void move_abs(llong row, llong col);
+	void move_rel(llong row, llong col);
+	void scroll_region(llong line0, llong line1);
+	void reset_style();
+	void erase_screen(uint arg);
+	void erase_line(uint arg);
+	void insert_lines(uint arg);
+	void delete_lines(uint arg);
+	void delete_chars(uint arg);
+	void handle_bell();
+	void handle_backspace();
+	void handle_horizontal_tab();
+	void handle_line_feed();
+	void handle_carriage_return();
+	void handle_bare(uint c);
+	void handle_control_character(uint c);
+	void handle_charset(uint cmd, uint set);
+	void osc(uint c);
+	void osc_string(uint c);
+	void csi_private_mode(uint code, uint set);
+	void csi_dec(uint c);
+	void csi_dec2(uint c);
+	void csi_dec3(uint c);
+	void csi_dsr();
+	void csi(uint c);
+	void absorb(uint c);
+	static int keycode_to_char(int key, int mods);
 };
 
 tty_teletype* tty_new();
-void tty_close(tty_teletype *tty);
-void tty_set_fd(tty_teletype *tty, int fd);
-tty_winsize tty_get_winsize(tty_teletype *tty);
-void tty_set_winsize(tty_teletype *tty, tty_winsize dim);
-void tty_update_offsets(tty_teletype *t);
-void tty_reset(tty_teletype *tty);
-tty_line_voff tty_visible_to_logical(tty_teletype *tty, llong vline);
-tty_line_loff tty_logical_to_visible(tty_teletype *tty, llong lline);
-llong tty_total_rows(tty_teletype *t);
-llong tty_total_lines(tty_teletype *t);
-llong tty_visible_rows(tty_teletype *t);
-llong tty_visible_lines(tty_teletype *t);
-ssize_t tty_io(tty_teletype *tty);
-ssize_t tty_proc(tty_teletype *tty);
-ssize_t tty_write(tty_teletype *tty, const char *buf, size_t len);
-void tty_keyboard(tty_teletype *tty, int key, int scancode, int action, int mods);

@@ -59,7 +59,7 @@ static std::vector<const char*> exec_vec;
 
 static void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    tty_keyboard(tty.get(), key, scancode, action, mods);
+    tty->keyboard(key, scancode, action, mods);
 }
 
 /* mouse callbacks */
@@ -130,9 +130,9 @@ static void reshape()
     cg->rscale = 1.0f/scale;
 
     tty_winsize dim = cg->get_winsize();
-    tty_winsize ldim = tty_get_winsize(tty.get());
+    tty_winsize ldim = tty->get_winsize();
     if (dim != ldim) {
-        tty_set_winsize(tty.get(), dim);
+        tty->set_winsize(dim);
         process->winsize(dim);
     }
 }
@@ -200,27 +200,27 @@ static void tty_app(int argc, char **argv)
 
     reshape();
     tty_winsize dim = cg->get_winsize();
-    tty_set_winsize(tty.get(), dim);
-    tty_reset(tty.get());
+    tty->set_winsize(dim);
+    tty->reset();
 
     int fd = process->exec(dim, exec_path, exec_argv);
-    tty_set_fd(tty.get(), fd);
+    tty->set_fd(fd);
 
     while (!glfwWindowShouldClose(window)) {
         render->update();
         render->display();
         glfwSwapBuffers(window);
         glfwPollEvents();
-        do if (tty_io(tty.get()) < 0) {
+        do if (tty->io() < 0) {
             glfwSetWindowShouldClose(window, 1);
         }
-        while (tty_proc(tty.get()) > 0);
+        while (tty->proc() > 0);
     }
 
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    tty_close(tty.get());
+    tty->close();
 }
 
 /* help text */

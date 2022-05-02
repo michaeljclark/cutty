@@ -39,7 +39,7 @@ using namespace std::chrono;
 /* globals */
 
 static font_manager_ft manager;
-static std::unique_ptr<tty_teletype> term;
+static std::unique_ptr<tty_teletype> tty;
 static std::unique_ptr<tty_cellgrid> cg;
 static std::unique_ptr<tty_render> render;
 static std::unique_ptr<tty_process> process;
@@ -95,8 +95,8 @@ static void flip_buffer_y(uint* buffer, uint width, uint height)
 
 static void capture_app(int argc, char **argv)
 {
-    term = std::unique_ptr<tty_teletype>(tty_new());
-    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, term.get(), true));
+    tty = std::unique_ptr<tty_teletype>(tty_new());
+    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get(), true));
     render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
     process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
@@ -108,30 +108,30 @@ static void capture_app(int argc, char **argv)
     render->reshape(cg->width, cg->height);
 
     tty_winsize dim = cg->get_winsize();
-    tty_set_winsize(term.get(), dim);
-    tty_reset(term.get());
+    tty->set_winsize(dim);
+    tty->reset();
 
     int fd = process->exec(dim, exec_path, exec_argv);
-    tty_set_fd(term.get(), fd);
+    tty->set_fd(fd);
 
     uint running = 1;
     while (running) {
         render->update();
         render->display();
         glFlush();
-        if (term->needs_capture) {
+        if (tty->needs_capture) {
             flip_buffer_y((uint*)buffer, (uint)cg->width, (uint)cg->height);
             image::saveToFile(output_file, image::createBitmap
                 ((uint)cg->width, (uint)cg->height, pixel_format_rgba, buffer));
             break;
         }
-        do if (tty_io(term.get()) < 0) {
+        do if (tty->io() < 0) {
             running = 0;
         }
-        while (tty_proc(term.get()) > 0);
+        while (tty->proc() > 0);
     }
 
-    tty_close(term.get());
+    tty->close();
 
     OSMesaDestroyContext(ctx);
     free(buffer);
