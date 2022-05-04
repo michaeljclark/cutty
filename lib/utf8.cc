@@ -111,13 +111,29 @@ int utf32_to_utf8(char *s, size_t len, uint32_t c)
         s[3] = v|(c&0b111111);
         s[4] = 0;
         return 4;
-   } else if (c < 0x110000 && len >= 6) {
+    } else if (c < 0x2110000 && len >= 6) {
         s[0] = u|((c>>24)&0b11);
         s[1] = v|((c>>18)&0b111111);
         s[2] = v|((c>>12)&0b111111);
         s[3] = v|((c>>6)&0b111111);
         s[4] = v|(c&0b111111);
         s[5] = 0;
+        return 5;
+    }
+    return -1;
+}
+
+int utf32_codelen(uint32_t c)
+{
+    if (c < 0x80) {
+        return 1;
+    } else if (c < 0x800) {
+        return 2;
+    } else if (c < 0x10000) {
+        return 3;
+    } else if (c < 0x110000) {
+        return 4;
+    } else if (c < 0x2110000) {
         return 5;
     }
     return -1;

@@ -106,7 +106,7 @@ static void cursor_position(GLFWwindow* window, double xpos, double ypos)
     mouse_pos = vec2(xpos, ypos);
 
     if (mouse_motion_ui9(vec3(mouse_pos, 1))) {
-        tty->needs_update = 1;
+        tty->set_needs_update();
         return;
     }
 }
@@ -125,9 +125,14 @@ static void reshape()
 
     render->reshape(window_width, window_height);
 
-    cg->width = (float)window_width;   /* ideally this becomes framebuffer */
-    cg->height = (float)window_height; /* width * height and display scale */
-    cg->rscale = 1.0f/scale;
+    tty_style lstyle = cg->get_style();
+    tty_style style = lstyle;
+    style.width = (float)window_width;
+    style.height = (float)window_height;
+    style.rscale = 1.0f/scale;
+    if (style != lstyle) {
+        cg->set_style(style);
+    }
 
     tty_winsize dim = cg->get_winsize();
     tty_winsize ldim = tty->get_winsize();
@@ -139,7 +144,7 @@ static void reshape()
 
 static void framebuffer_size(GLFWwindow* window, int w, int h)
 {
-    tty->needs_update = 1;
+    tty->set_needs_update();
 
     reshape();
     render->update();
@@ -170,13 +175,24 @@ static void tty_app(int argc, char **argv)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, CTX_OPENGL_MINOR);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_FALSE);
 
+    /*
+     * we need to scan font directory for caching to work, as it uses
+     * font ids assigned during scanning. this also means that if the
+     * font directory has changed, then cached font ids will be wrong
+     */
+    if (manager.msdf_enabled) {
+        manager.scanFontDir("fonts");
+    }
+
     tty = std::unique_ptr<tty_teletype>(tty_new());
     cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get()));
     render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
     process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
 
-    window = glfwCreateWindow((int)cg->width, (int)cg->height, argv[0], NULL, NULL);
+    tty_style style = cg->get_style();
+
+    window = glfwCreateWindow((int)style.width, (int)style.height, argv[0], NULL, NULL);
     glfwMakeContextCurrent(window);
     gladLoadGL();
     glfwSwapInterval(1);

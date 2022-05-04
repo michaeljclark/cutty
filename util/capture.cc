@@ -100,12 +100,13 @@ static void capture_app(int argc, char **argv)
     render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
     process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
+    cg->set_flag(tty_cellgrid_background, false);
 
-    cg->flags &= ~tty_cellgrid_background;
-    osmesa_init((uint)cg->width, (uint)cg->height);
+    tty_style style = cg->get_style();
+    osmesa_init((uint)style.width, (uint)style.height);
 
     render->initialize();
-    render->reshape(cg->width, cg->height);
+    render->reshape(style.width, style.height);
 
     tty_winsize dim = cg->get_winsize();
     tty->set_winsize(dim);
@@ -119,10 +120,10 @@ static void capture_app(int argc, char **argv)
         render->update();
         render->display();
         glFlush();
-        if (tty->needs_capture) {
-            flip_buffer_y((uint*)buffer, (uint)cg->width, (uint)cg->height);
+        if (tty->get_needs_capture()) {
+            flip_buffer_y((uint*)buffer, (uint)style.width, (uint)style.height);
             image::saveToFile(output_file, image::createBitmap
-                ((uint)cg->width, (uint)cg->height, pixel_format_rgba, buffer));
+                ((uint)style.width, (uint)style.height, pixel_format_rgba, buffer));
             break;
         }
         do if (tty->io() < 0) {

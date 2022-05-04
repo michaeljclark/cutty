@@ -50,7 +50,103 @@ static const char* ctrl_code[32] = {
     "US",  // ^_ - Unit Separator
 };
 
-tty_teletype::tty_teletype() :
+struct tty_teletype_impl : tty_teletype
+{
+    uint state;
+    uint flags;
+    uint charset;
+    uint code;
+    uint argc;
+    uint argv[5];
+    uint fd;
+    uchar needs_update;
+    uchar needs_capture;
+    std::string osc_data;
+
+    std::vector<uchar> in_buf;
+    ssize_t in_start;
+    ssize_t in_end;
+
+    std::vector<uchar> out_buf;
+    ssize_t out_start;
+    ssize_t out_end;
+
+    tty_cell tmpl;
+    std::vector<tty_line> lines;
+    std::vector<tty_line_voff> voffsets;
+    std::vector<tty_line_loff> loffsets;
+    tty_winsize ws;
+    llong cur_row;
+    llong cur_col;
+    llong min_row;
+    llong top_marg;
+    llong bot_marg;
+
+    tty_teletype_impl();
+    virtual ~tty_teletype_impl() = default;
+
+    virtual void close();
+    virtual bool get_needs_update();
+    virtual void set_needs_update();
+    virtual bool get_needs_capture();
+    virtual void set_needs_capture();
+    virtual void update_offsets();
+    virtual tty_line_voff visible_to_logical(llong vline);
+    virtual tty_line_loff logical_to_visible(llong lline);
+    virtual tty_line get_line(llong lline);
+    virtual llong total_rows();
+    virtual llong total_lines();
+    virtual llong visible_rows();
+    virtual llong visible_lines();
+    virtual llong get_cur_row();
+    virtual llong get_cur_col();
+    virtual bool has_flag(uint check);
+    virtual tty_winsize get_winsize();
+    virtual void set_winsize(tty_winsize dim);
+    virtual void set_fd(int fd);
+    virtual void reset();
+    virtual ssize_t io();
+    virtual ssize_t proc();
+    virtual ssize_t write(const char *buf, size_t len);
+    virtual void keyboard(int key, int scancode, int action, int mods);
+
+protected:
+    std::string args_str();
+    int opt_arg(int arg, int opt);
+    void send(uint c);
+    void xtwinops();
+    void set_row(llong row);
+    void set_col(llong col);
+    void move_abs(llong row, llong col);
+    void move_rel(llong row, llong col);
+    void scroll_region(llong line0, llong line1);
+    void reset_style();
+    void erase_screen(uint arg);
+    void erase_line(uint arg);
+    void insert_lines(uint arg);
+    void delete_lines(uint arg);
+    void delete_chars(uint arg);
+    void handle_bell();
+    void handle_backspace();
+    void handle_horizontal_tab();
+    void handle_line_feed();
+    void handle_carriage_return();
+    void handle_bare(uint c);
+    void handle_control_character(uint c);
+    void handle_charset(uint cmd, uint set);
+    void osc(uint c);
+    void osc_string(uint c);
+    void csi_private_mode(uint code, uint set);
+    void csi_dec(uint c);
+    void csi_dec2(uint c);
+    void csi_dec3(uint c);
+    void csi_dsr();
+    void csi(uint c);
+    void absorb(uint c);
+    static int keycode_to_char(int key, int mods);
+};
+
+tty_teletype_impl::tty_teletype_impl() :
     state(tty_state_normal),
     flags(tty_flag_DECAWM | tty_flag_DECTCEM),
     charset(tty_charset_utf8),
@@ -85,13 +181,37 @@ tty_teletype::tty_teletype() :
 
 tty_teletype* tty_new()
 {
-    return new tty_teletype();
+    return new tty_teletype_impl();
 }
 
-void tty_teletype::close()
+void tty_teletype_impl::close()
 {
     ::close(fd);
     fd = -1;
+}
+
+bool tty_teletype_impl::get_needs_update()
+{
+    bool flag = needs_update;
+    needs_update = false;
+    return flag;
+}
+
+void tty_teletype_impl::set_needs_update()
+{
+    needs_update |= true;
+}
+
+bool tty_teletype_impl::get_needs_capture()
+{
+    bool flag = needs_capture;
+    needs_capture = false;
+    return flag;
+}
+
+void tty_teletype_impl::set_needs_capture()
+{
+    needs_capture |= true;
 }
 
 static std::string char_str(uint c)
@@ -114,7 +234,7 @@ static std::string char_str(uint c)
     return buf;
 }
 
-std::string tty_teletype::args_str()
+std::string tty_teletype_impl::args_str()
 {
     std::string s;
     for (size_t i = 0; i < argc; i++) {
@@ -124,12 +244,12 @@ std::string tty_teletype::args_str()
     return s;
 }
 
-int tty_teletype::opt_arg(int arg, int opt)
+int tty_teletype_impl::opt_arg(int arg, int opt)
 {
     return arg < argc ? argv[arg] : opt;
 }
 
-void tty_teletype::send(uint c)
+void tty_teletype_impl::send(uint c)
 {
     Trace("send: %s\n", char_str(c).c_str());
     char b = (char)c;
@@ -148,14 +268,14 @@ size_t tty_line::count() { return pcount > 0 ? pcount : cells.size(); }
 
 bool tty_line::ispacked() { return pcount > 0; }
 
-void tty_line::pack()
+tty_line tty_line::pack()
 {
-    if (pcount > 0) return;
+    if (pcount > 0) return *this;
 
     std::vector<tty_cell> &ucells = cells;
     std::vector<tty_cell> pcells;
 
-    utf8.clear();
+    std::string utf8;
 
     tty_cell t = { (uint)-1 };
     for (size_t i = 0; i < ucells.size(); i++) {
@@ -169,15 +289,12 @@ void tty_line::pack()
         utf8.append(std::string(u, l));
     }
 
-    pcount = cells.size();
-    cells = pcells;
-    cells.shrink_to_fit();
-    utf8.shrink_to_fit();
+    return tty_line { cells.size(), pcells, utf8 };
 }
 
-void tty_line::unpack()
+tty_line tty_line::unpack()
 {
-    if (pcount == 0) return;
+    if (pcount == 0) return *this;
 
     std::vector<tty_cell> &pcells = cells;
     std::vector<tty_cell> ucells;
@@ -193,9 +310,17 @@ void tty_line::unpack()
         o += v.len;
     }
 
-    pcount = 0;
-    cells = ucells;
-    utf8.clear();
+    return tty_line { 0, ucells, std::string() };
+}
+
+void tty_line::pack_inplace()
+{
+    if (pcount == 0) *this = pack();
+}
+
+void tty_line::unpack_inplace()
+{
+    if (pcount > 0) *this = unpack();
 }
 
 void tty_line::clear()
@@ -207,7 +332,7 @@ void tty_line::clear()
     utf8.shrink_to_fit();
 }
 
-void tty_teletype::update_offsets()
+void tty_teletype_impl::update_offsets()
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
     size_t cols = ws.vis_cols;
@@ -254,7 +379,7 @@ void tty_teletype::update_offsets()
     min_row = cur_row;
 }
 
-tty_line_voff tty_teletype::visible_to_logical(llong vline)
+tty_line_voff tty_teletype_impl::visible_to_logical(llong vline)
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
@@ -265,7 +390,7 @@ tty_line_voff tty_teletype::visible_to_logical(llong vline)
     }
 }
 
-tty_line_loff tty_teletype::logical_to_visible(llong lline)
+tty_line_loff tty_teletype_impl::logical_to_visible(llong lline)
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
@@ -276,24 +401,29 @@ tty_line_loff tty_teletype::logical_to_visible(llong lline)
     }
 }
 
-llong tty_teletype::total_rows()
+tty_line tty_teletype_impl::get_line(llong lline)
+{
+    return lines[lline].unpack();
+}
+
+llong tty_teletype_impl::total_rows()
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     return wrap_enabled ? voffsets.size() : lines.size();
 }
 
-llong tty_teletype::total_lines()
+llong tty_teletype_impl::total_lines()
 {
     return lines.size();
 }
 
-llong tty_teletype::visible_rows()
+llong tty_teletype_impl::visible_rows()
 {
     return ws.vis_rows;
 }
 
-llong tty_teletype::visible_lines()
+llong tty_teletype_impl::visible_lines()
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
     llong rows = ws.vis_rows;
@@ -316,12 +446,27 @@ llong tty_teletype::visible_lines()
     }
 }
 
-tty_winsize tty_teletype::get_winsize()
+llong tty_teletype_impl::get_cur_row()
+{
+    return cur_row;
+}
+
+llong tty_teletype_impl::get_cur_col()
+{
+    return cur_col;
+}
+
+bool tty_teletype_impl::has_flag(uint check)
+{
+    return (flags & check) == check;
+}
+
+tty_winsize tty_teletype_impl::get_winsize()
 {
     return ws;
 }
 
-void tty_teletype::set_winsize(tty_winsize d)
+void tty_teletype_impl::set_winsize(tty_winsize d)
 {
     if (ws != d) {
         ws = d;
@@ -329,22 +474,22 @@ void tty_teletype::set_winsize(tty_winsize d)
     }
 }
 
-void tty_teletype::set_row(llong row)
+void tty_teletype_impl::set_row(llong row)
 {
     if (row < 0) row = 0;
     if (row != cur_row) {
-        lines[cur_row].pack();
+        lines[cur_row].pack_inplace();
         if (row >= lines.size()) {
             lines.resize(row + 1);
         } else {
-            lines[row].unpack();
+            lines[row].unpack_inplace();
         }
         cur_row = row;
         min_row = std::min(min_row, row);
     }
 }
 
-void tty_teletype::set_col(llong col)
+void tty_teletype_impl::set_col(llong col)
 {
     if (col < 0) col = 0;
     if (col != cur_col) {
@@ -352,7 +497,7 @@ void tty_teletype::set_col(llong col)
     }
 }
 
-void tty_teletype::move_abs(llong row, llong col)
+void tty_teletype_impl::move_abs(llong row, llong col)
 {
     Trace("move_abs: %lld %lld\n", row, col);
     if (row != -1) {
@@ -367,7 +512,7 @@ void tty_teletype::move_abs(llong row, llong col)
     }
 }
 
-void tty_teletype::move_rel(llong row, llong col)
+void tty_teletype_impl::move_rel(llong row, llong col)
 {
     Trace("move_rel: %lld %lld\n", row, col);
     llong new_row = cur_row + row;
@@ -378,33 +523,33 @@ void tty_teletype::move_rel(llong row, llong col)
     set_col(new_col);
 }
 
-void tty_teletype::scroll_region(llong line0, llong line1)
+void tty_teletype_impl::scroll_region(llong line0, llong line1)
 {
     Trace("scroll_region: %lld %lld\n", line0, line1);
     top_marg = line0;
     bot_marg = line1;
 }
 
-void tty_teletype::reset_style()
+void tty_teletype_impl::reset_style()
 {
     tmpl.flags = 0;
     tmpl.fg = tty_cell_color_fg_dfl;
     tmpl.bg = tty_cell_color_bg_dfl;
 }
 
-void tty_teletype::set_fd(int fd)
+void tty_teletype_impl::set_fd(int fd)
 {
     this->fd = fd;
 }
 
-void tty_teletype::reset()
+void tty_teletype_impl::reset()
 {
     Trace("reset\n");
     move_abs(1, 1);
     reset_style();
 }
 
-void tty_teletype::erase_screen(uint arg)
+void tty_teletype_impl::erase_screen(uint arg)
 {
     Trace("erase_screen: %d\n", arg);
     switch (arg) {
@@ -427,7 +572,7 @@ void tty_teletype::erase_screen(uint arg)
     }
 }
 
-void tty_teletype::erase_line(uint arg)
+void tty_teletype_impl::erase_line(uint arg)
 {
     Trace("erase_line: %d\n", arg);
     switch (arg) {
@@ -451,7 +596,7 @@ void tty_teletype::erase_line(uint arg)
     }
 }
 
-void tty_teletype::insert_lines(uint arg)
+void tty_teletype_impl::insert_lines(uint arg)
 {
     Trace("insert_lines: %d\n", arg);
     if (arg == 0) return;
@@ -460,16 +605,16 @@ void tty_teletype::insert_lines(uint arg)
     llong top = top_marg == 0 ? 1           : top_marg;
     llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
     llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
-    lines[cur_row].pack();
+    lines[cur_row].pack_inplace();
     for (uint i = 0; i < arg; i++) {
         lines.insert(lines.begin() + cur_row, tty_line{});
         lines.erase(lines.end() - 1 - scrolloff);
     }
-    lines[cur_row].unpack();
+    lines[cur_row].unpack_inplace();
     cur_col = 0;
 }
 
-void tty_teletype::delete_lines(uint arg)
+void tty_teletype_impl::delete_lines(uint arg)
 {
     Trace("delete_lines: %d\n", arg);
     if (arg == 0) return;
@@ -478,18 +623,18 @@ void tty_teletype::delete_lines(uint arg)
     llong top = top_marg == 0 ? 1           : top_marg;
     llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
     llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
-    lines[cur_row].pack();
+    lines[cur_row].pack_inplace();
     for (uint i = 0; i < arg; i++) {
         if (cur_row < lines.size()) {
             lines.erase(lines.begin() + cur_row);
             lines.insert(lines.end() - scrolloff, tty_line{});
         }
     }
-    lines[cur_row].unpack();
+    lines[cur_row].unpack_inplace();
     cur_col = 0;
 }
 
-void tty_teletype::delete_chars(uint arg)
+void tty_teletype_impl::delete_chars(uint arg)
 {
     Trace("delete_chars: %d\n", arg);
     for (size_t i = 0; i < arg; i++) {
@@ -501,36 +646,36 @@ void tty_teletype::delete_chars(uint arg)
     }
 }
 
-void tty_teletype::handle_bell()
+void tty_teletype_impl::handle_bell()
 {
     Trace("handle_bell: unimplemented\n");
 }
 
-void tty_teletype::handle_backspace()
+void tty_teletype_impl::handle_backspace()
 {
     Trace("handle_backspace\n");
     if (cur_col > 0) cur_col--;
 }
 
-void tty_teletype::handle_horizontal_tab()
+void tty_teletype_impl::handle_horizontal_tab()
 {
     Trace("handle_horizontal_tab\n");
     cur_col = (cur_col + 8) & ~7;
 }
 
-void tty_teletype::handle_line_feed()
+void tty_teletype_impl::handle_line_feed()
 {
     Trace("handle_line_feed\n");
     set_row(cur_row + 1);
 }
 
-void tty_teletype::handle_carriage_return()
+void tty_teletype_impl::handle_carriage_return()
 {
     Trace("handle_carriage_return\n");
     cur_col = 0;
 }
 
-void tty_teletype::handle_bare(uint c)
+void tty_teletype_impl::handle_bare(uint c)
 {
     Trace("handle_bare: %s\n", char_str(c).c_str());
     if (cur_col >= lines[cur_row].cells.size()) {
@@ -540,7 +685,7 @@ void tty_teletype::handle_bare(uint c)
         tty_cell{c, tmpl.flags, tmpl.fg, tmpl.bg};
 }
 
-void tty_teletype::handle_control_character(uint c)
+void tty_teletype_impl::handle_control_character(uint c)
 {
     Trace("handle_control_character: %s\n", char_str(c).c_str());
     switch (c) {
@@ -555,27 +700,27 @@ void tty_teletype::handle_control_character(uint c)
     }
 }
 
-void tty_teletype::xtwinops()
+void tty_teletype_impl::xtwinops()
 {
     Debug("xtwinops: %s unimplemented\n", args_str().c_str());
 }
 
-void tty_teletype::handle_charset(uint cmd, uint set)
+void tty_teletype_impl::handle_charset(uint cmd, uint set)
 {
     Debug("handle_charset: %c %c unimplemented\n", cmd, set);
 }
 
-void tty_teletype::osc(uint c)
+void tty_teletype_impl::osc(uint c)
 {
     Debug("osc: %s %s unimplemented\n",
         args_str().c_str(), char_str(c).c_str());
     if (argc == 1 && argv[0] == 555) {
         Debug("osc: screen-capture\n");
-        needs_capture = 1;
+        set_needs_capture();
     }
 }
 
-void tty_teletype::osc_string(uint c)
+void tty_teletype_impl::osc_string(uint c)
 {
     Debug("osc_string: %s %s \"%s\" unimplemented\n",
         args_str().c_str(), char_str(c).c_str(), osc_data.c_str());
@@ -603,7 +748,7 @@ static tty_private_mode_rec* tty_lookup_private_mode_rec(uint code)
     return NULL;
 }
 
-void tty_teletype::csi_private_mode(uint code, uint set)
+void tty_teletype_impl::csi_private_mode(uint code, uint set)
 {
     tty_private_mode_rec *rec = tty_lookup_private_mode_rec(code);
     if (rec == NULL) {
@@ -620,7 +765,7 @@ void tty_teletype::csi_private_mode(uint code, uint set)
     }
 }
 
-void tty_teletype::csi_dec(uint c)
+void tty_teletype_impl::csi_dec(uint c)
 {
     switch (c) {
     case 'l': csi_private_mode(opt_arg(0, 0), 0); break;
@@ -632,19 +777,19 @@ void tty_teletype::csi_dec(uint c)
     }
 }
 
-void tty_teletype::csi_dec2(uint c)
+void tty_teletype_impl::csi_dec2(uint c)
 {
     Debug("csi_dec2: %s %s unimplemented\n",
         char_str(c).c_str(), args_str().c_str());
 }
 
-void tty_teletype::csi_dec3(uint c)
+void tty_teletype_impl::csi_dec3(uint c)
 {
     Debug("csi_dec3: %s %s unimplemented\n",
         char_str(c).c_str(), args_str().c_str());
 }
 
-void tty_teletype::csi_dsr()
+void tty_teletype_impl::csi_dsr()
 {
     Trace("csi_dsr: %s\n", args_str().c_str());
     switch (opt_arg(0, 0)) {
@@ -665,7 +810,7 @@ void tty_teletype::csi_dsr()
     }
 }
 
-void tty_teletype::csi(uint c)
+void tty_teletype_impl::csi(uint c)
 {
     Trace("csi: %s %s\n",
         args_str().c_str(), char_str(c).c_str());
@@ -855,7 +1000,7 @@ void tty_teletype::csi(uint c)
     }
 }
 
-void tty_teletype::absorb(uint c)
+void tty_teletype_impl::absorb(uint c)
 {
     Trace("absorb: %s\n", char_str(c).c_str());
 restart:
@@ -1142,7 +1287,7 @@ restart:
     needs_update = 1;
 }
 
-ssize_t tty_teletype::io()
+ssize_t tty_teletype_impl::io()
 {
     struct pollfd pfds[1];
     ssize_t len;
@@ -1205,7 +1350,7 @@ ssize_t tty_teletype::io()
     return 0;
 }
 
-ssize_t tty_teletype::proc()
+ssize_t tty_teletype_impl::proc()
 {
     size_t count;
 
@@ -1231,7 +1376,7 @@ ssize_t tty_teletype::proc()
     return count;
 }
 
-ssize_t tty_teletype::write(const char *buf, size_t len)
+ssize_t tty_teletype_impl::write(const char *buf, size_t len)
 {
     ssize_t count, ncopy = 0;
     if (out_start > out_end) {
@@ -1255,7 +1400,7 @@ ssize_t tty_teletype::write(const char *buf, size_t len)
     return ncopy;
 }
 
-int tty_teletype::keycode_to_char(int key, int mods)
+int tty_teletype_impl::keycode_to_char(int key, int mods)
 {
     // We convert simple Ctrl and Shift modifiers into ASCII
     if (key >= GLFW_KEY_SPACE && key <= GLFW_KEY_EQUAL) {
@@ -1312,7 +1457,7 @@ int tty_teletype::keycode_to_char(int key, int mods)
     return 0;
 }
 
-void tty_teletype::keyboard(int key, int scancode, int action, int mods)
+void tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
 {
     int c;
     switch (action) {

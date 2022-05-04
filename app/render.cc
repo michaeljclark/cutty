@@ -134,24 +134,28 @@ std::vector<std::string> tty_render_opengl::get_stats()
 
 void tty_render_opengl::render_stats(draw_list &batch)
 {
-    text_shaper_hb shaper;
-    text_renderer_ft renderer(manager, cg->rscale);
-
-    uint c = 0xff000000;
-    float x = cg->width - cg->margin, y = cg->margin;
+    tty_style style = cg->get_style();
+    tty_font_metric fm = cg->get_font_metric();
+    font_face *face = cg->get_font_face(tty_cellgrid_face_regular);
+    const char *lang = cg->get_lang();
     std::vector<std::string> stats = get_stats();
 
-    float glyph_height = cg->fm.height - cg->fm.descender;
-    float y_offset = floorf((cg->fm.leading - glyph_height)/2.f) + cg->fm.descender;
+    text_shaper_hb shaper;
+    text_renderer_ft renderer(manager, style.rscale);
+
+    uint c = 0xff000000;
+    float x = style.width - style.margin, y = style.margin;
+    float glyph_height = fm.height - fm.descender;
+    float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
 
     for (size_t i = 0; i < stats.size(); i++) {
         std::vector<glyph_shape> shapes;
-        text_segment segment(stats[i], cg->text_lang, cg->mono1_regular,
-            (int)((float)cg->font_size * 64.0f), x, y + cg->fm.leading - y_offset, c);
+        text_segment segment(stats[i], lang, face,
+            (int)(fm.size * 64.0f), x, y + fm.leading - y_offset, c);
         shaper.shape(shapes, segment);
         for (auto &shape : shapes) segment.x -= shape.x_advance/64.0f;
         renderer.render(batch, shapes, segment);
-        y += (int)((float)cg->font_size * 1.3f);
+        y += (int)fm.leading;
     }
 }
 
@@ -159,7 +163,7 @@ void tty_render_opengl::update()
 {
     static ullong tl, tn;
 
-    if (!cg->get_teletype()->needs_update) return;
+    if (!cg->get_teletype()->get_needs_update()) return;
 
     auto now = high_resolution_clock::now();
     tn = duration_cast<nanoseconds>(now.time_since_epoch()).count();
@@ -185,8 +189,6 @@ void tty_render_opengl::update()
     /* update vertex and index buffers arrays (idempotent) */
     vertex_buffer_create("vbo", &vbo, GL_ARRAY_BUFFER, batch.vertices);
     vertex_buffer_create("ibo", &ibo, GL_ELEMENT_ARRAY_BUFFER, batch.indices);
-
-    cg->get_teletype()->needs_update = 0;
 }
 
 program* tty_render_opengl::cmd_shader_gl(int cmd_shader)
@@ -203,7 +205,7 @@ program* tty_render_opengl::cmd_shader_gl(int cmd_shader)
 void tty_render_opengl::display()
 {
     /* okay, lets send commands to the GPU */
-    color bg(cg->background_color);
+    color bg(cg->get_style().background_color);
     glClearColor(bg.r, bg.g, bg.b, bg.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -246,7 +248,9 @@ void tty_render_opengl::update_uniforms(program *prog)
 
 void tty_render_opengl::reshape(int width, int height)
 {
-    mvp = glm::ortho(0.0f, cg->width, cg->height, 0.0f, 0.0f, 100.0f);
+    tty_style style = cg->get_style();
+
+    mvp = glm::ortho(0.0f, style.width, style.height, 0.0f, 0.0f, 100.0f);
 
     glUseProgram(prog_canvas.pid);
     update_uniforms(&prog_canvas);

@@ -35,9 +35,9 @@
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
 
-static const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
-static const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
-static const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
+const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
+const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
+const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
 
 uint tty_typeface_lookup_glyph(font_face *face, uint codepoint)
 {
@@ -45,7 +45,7 @@ uint tty_typeface_lookup_glyph(font_face *face, uint codepoint)
     return FT_Get_Char_Index(fft->ftface, codepoint);
 }
 
-tty_fontmetric tty_typeface_get_metrics(font_face *face, float font_size, int codepoint)
+tty_font_metric tty_typeface_get_metrics(font_face *face, float font_size, int codepoint)
 {
     font_face_ft *fft = static_cast<font_face_ft*>(face);
     FT_Face ftface = fft->ftface;
@@ -76,7 +76,7 @@ tty_fontmetric tty_typeface_get_metrics(font_face *face, float font_size, int co
     float underline_thickness = ceilf(ftface->underline_thickness * scale * 4.0f) * 0.25f;
     float advance = roundf(ftglyph->advance.x / 64.0f * 4.0f) * 0.25f;
 
-    tty_fontmetric m = {
+    tty_font_metric m = {
         font_size, advance, leading, height,
         ascender, descender, underline_position, underline_thickness
     };
@@ -84,7 +84,7 @@ tty_fontmetric tty_typeface_get_metrics(font_face *face, float font_size, int co
     return m;
 }
 
-void tty_typeface_print_metrics(font_face *face, tty_fontmetric m)
+void tty_typeface_print_metrics(font_face *face, tty_font_metric m)
 {
     Debug("face=%s size=%f advance=%f leading=%f\n",
         face->name.c_str(), m.size, m.advance, m.leading);
@@ -92,27 +92,4 @@ void tty_typeface_print_metrics(font_face *face, tty_fontmetric m)
         m.height, m.ascender, m.descender);
     Debug("\tunderline_position=%f underline_thickness=%f\n",
         m.underline_position, m.underline_thickness);
-}
-
-void tty_typeface_init(tty_cellgrid *cg)
-{
-    font_manager_ft *manager = cg->get_manager();
-    /*
-     * we need to scan font directory for caching to work, as it uses
-     * font ids assigned during scanning. this also means that if the
-     * font directory has changed, then cached font ids will be wrong
-     */
-    if (manager->msdf_enabled) {
-        manager->scanFontDir("fonts");
-    }
-
-    /* fetch our sans font */
-    cg->mono1_emoji = manager->findFontByPath(mono1_emoji_font_path);
-    cg->mono1_emoji->flags |= font_face_color;
-    cg->mono1_regular = manager->findFontByPath(mono1_regular_font_path);
-    cg->mono1_bold = manager->findFontByPath(mono1_bold_font_path);
-
-    /* measure font */
-    cg->fm = tty_typeface_get_metrics(cg->mono1_regular, cg->font_size, 'M');
-    tty_typeface_print_metrics(cg->mono1_regular, cg->fm);
 }
