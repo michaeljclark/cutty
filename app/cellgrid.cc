@@ -209,7 +209,7 @@ void tty_cellgrid_impl::draw_loop(int rows, int cols,
         tty_line_voff voff = tty->visible_to_logical(j);
         size_t k = voff.lline, o = voff.offset;
         tty_line line = tty->get_line(k);
-        size_t limit = std::min(o + cols, line.count());
+        size_t limit = std::min(o + cols, line.cells.size());
 
         linepre_cb(line, k, l, o, o);
         for (size_t i = o; i < limit; i++) {

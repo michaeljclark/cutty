@@ -61,17 +61,7 @@ struct tty_cell
 
 struct tty_line
 {
-    size_t pcount;
     std::vector<tty_cell> cells;
-    std::string utf8;
-
-    size_t count();
-    bool ispacked();
-    tty_line pack();
-    tty_line unpack();
-    void pack_inplace();
-    void unpack_inplace();
-    void clear();
 };
 
 enum tty_char
@@ -174,8 +164,8 @@ struct tty_winsize
 inline bool operator==(tty_winsize &a, tty_winsize&b) { return a.tuple() == b.tuple(); }
 inline bool operator!=(tty_winsize &a, tty_winsize&b) { return a.tuple() != b.tuple(); }
 
-struct tty_line_voff { size_t lline, offset; };
-struct tty_line_loff { size_t vline, count; };
+struct tty_line_voff { llong lline, offset; };
+struct tty_line_loff { llong vline, count; };
 
 struct tty_teletype
 {
@@ -189,7 +179,7 @@ struct tty_teletype
     virtual void update_offsets() = 0;
     virtual tty_line_voff visible_to_logical(llong vline) = 0;
     virtual tty_line_loff logical_to_visible(llong lline) = 0;
-    virtual tty_line get_line(llong lline) = 0;
+    virtual tty_line& get_line(llong lline) = 0;
     virtual llong total_rows() = 0;
     virtual llong total_lines() = 0;
     virtual llong visible_rows() = 0;

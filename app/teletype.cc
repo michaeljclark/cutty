@@ -14,6 +14,7 @@
 
 static int io_buffer_size = 65536;
 static int io_poll_timeout = 1;
+static int line_cache_size = 128;
 
 static const char* ctrl_code[32] = {
     "NUL",
@@ -50,6 +51,58 @@ static const char* ctrl_code[32] = {
     "US",  // ^_ - Unit Separator
 };
 
+typedef struct { ushort d[3]; } tty_int48;
+
+static inline llong tty_int48_get(tty_int48 p)
+{
+    llong v = ((llong)p.d[0]) | ((llong)p.d[1] << 16) | ((llong)p.d[2] << 32);
+    return v << 16 >> 16;
+}
+
+static inline tty_int48 tty_int48_set(llong v)
+{
+    tty_int48 x = { (ushort)v, (ushort)(v >> 16), (ushort)(v >> 32) };
+    return x;
+}
+
+struct tty_packed_line
+{
+    tty_int48 text_offset;
+    tty_int48 cell_offset;
+    tty_int48 text_count;
+    tty_int48 cell_count;
+};
+
+struct tty_cached_line
+{
+    tty_int48 lline;
+    short dirty;
+    tty_line ldata;
+};
+
+struct tty_packed_voff { tty_int48 lline, offset; };
+struct tty_packed_loff { tty_int48 vline, count; };
+
+struct tty_line_store
+{
+    std::vector<tty_cell> cells;
+    std::vector<char> text;
+    std::vector<tty_packed_line> lines;
+    std::vector<tty_cached_line> cache;
+    std::vector<tty_packed_voff> voffsets;
+    std::vector<tty_packed_loff> loffsets;
+
+    tty_packed_line pack(tty_line &uline);
+    tty_line unpack(tty_packed_line &pline);
+    tty_line& get_line(llong lline, bool edit);
+    llong count_cells(tty_packed_line &pline);
+    llong count_cells(llong lline);
+    void clear_line(llong lline);
+    void invalidate_cache();
+
+    tty_line_store();
+};
+
 struct tty_teletype_impl : tty_teletype
 {
     uint state;
@@ -72,9 +125,7 @@ struct tty_teletype_impl : tty_teletype
     ssize_t out_end;
 
     tty_cell tmpl;
-    std::vector<tty_line> lines;
-    std::vector<tty_line_voff> voffsets;
-    std::vector<tty_line_loff> loffsets;
+    tty_line_store hist;
     tty_winsize ws;
     llong cur_row;
     llong cur_col;
@@ -93,7 +144,7 @@ struct tty_teletype_impl : tty_teletype
     virtual void update_offsets();
     virtual tty_line_voff visible_to_logical(llong vline);
     virtual tty_line_loff logical_to_visible(llong lline);
-    virtual tty_line get_line(llong lline);
+    virtual tty_line& get_line(llong lline);
     virtual llong total_rows();
     virtual llong total_lines();
     virtual llong visible_rows();
@@ -164,9 +215,7 @@ tty_teletype_impl::tty_teletype_impl() :
     out_start(0),
     out_end(0),
     tmpl{},
-    lines(),
-    voffsets(),
-    loffsets(),
+    hist(),
     ws{0,0,0,0},
     cur_row(0),
     cur_col(0),
@@ -176,7 +225,6 @@ tty_teletype_impl::tty_teletype_impl() :
 {
     in_buf.resize(io_buffer_size);
     out_buf.resize(io_buffer_size);
-    lines.push_back(tty_line{});
 }
 
 tty_teletype* tty_new()
@@ -264,83 +312,145 @@ void tty_teletype_impl::send(uint c)
  *   contains an offset into utf8_data and the cell count is in pcount.
  */
 
-size_t tty_line::count() { return pcount > 0 ? pcount : cells.size(); }
-
-bool tty_line::ispacked() { return pcount > 0; }
-
-tty_line tty_line::pack()
+tty_line_store::tty_line_store()
+    : cells(), text(), lines(), cache(), voffsets(), loffsets()
 {
-    if (pcount > 0) return *this;
-
-    std::vector<tty_cell> &ucells = cells;
-    std::vector<tty_cell> pcells;
-
-    std::string utf8;
-
-    tty_cell t = { (uint)-1 };
-    for (size_t i = 0; i < ucells.size(); i++) {
-        tty_cell s = ucells[i];
-        if (s.flags != t.flags || s.fg != t.fg || s.bg != t.bg) {
-            t = tty_cell{(uint)utf8.size(), s.flags, s.fg, s.bg};
-            pcells.push_back(t);
-        }
-        char u[8];
-        size_t l = utf32_to_utf8(u, sizeof(u), s.codepoint);
-        utf8.append(std::string(u, l));
+    for (size_t i = 0; i < line_cache_size; i++) {
+        cache.push_back(tty_cached_line{ tty_int48_set(-1), false, tty_line{} });
     }
-
-    return tty_line { cells.size(), pcells, utf8 };
+    lines.push_back(tty_packed_line{});
 }
 
-tty_line tty_line::unpack()
+tty_packed_line tty_line_store::pack(tty_line &uline)
 {
-    if (pcount == 0) return *this;
+    llong toff = text.size(), tcount = 0;
+    llong coff = cells.size(), ccount = 0;
 
-    std::vector<tty_cell> &pcells = cells;
-    std::vector<tty_cell> ucells;
+    tty_cell t = { (uint)-1 };
+    for (llong i = 0; i < uline.cells.size(); i++) {
+        char u[8];
+        tty_cell s = uline.cells[i];
+        llong l = utf32_to_utf8(u, sizeof(u), s.codepoint);
+        llong o = text.size(), p = o - toff;
+        assert(p < (1ull << 32));
+        if (s.flags != t.flags || s.fg != t.fg || s.bg != t.bg) {
+            t = tty_cell{(uint)p, s.flags, s.fg, s.bg};
+            cells.push_back(t);
+            ccount++;
+        }
+        text.resize(o + l);
+        memcpy(&text[o], u, l);
+        tcount += l;
+    }
+
+    assert(toff < (1ull << 48));
+    assert(coff < (1ull << 48));
+    assert(tcount < (1ull << 48));
+    assert(ccount < (1ull << 48));
+
+    return tty_packed_line {
+        tty_int48_set(toff),
+        tty_int48_set(coff),
+        tty_int48_set(tcount),
+        tty_int48_set(ccount),
+    };
+}
+
+tty_line tty_line_store::unpack(tty_packed_line &pline)
+{
+    tty_line uline;
 
     tty_cell t = { 0 };
-    size_t o = 0, q = 0, l = utf8.size();
+    llong o = 0, j = tty_int48_get(pline.text_offset), l = tty_int48_get(pline.text_count);
+    llong p = 0, k = tty_int48_get(pline.cell_offset), m = tty_int48_get(pline.cell_count);
     while (o < l) {
-        if (q < pcells.size() && pcells[q].codepoint == o) {
-            t = pcells[q++];
+        if (p < m && cells[k + p].codepoint == o) {
+            t = cells[k + p];
+            p++;
         }
-        utf32_code v = utf8_to_utf32_code(&utf8[o]);
-        ucells.push_back(tty_cell{(uint)v.code, t.flags, t.fg, t.bg});
+        utf32_code v = utf8_to_utf32_code(&text[j + o]);
+        uline.cells.push_back(tty_cell{(uint)v.code, t.flags, t.fg, t.bg});
         o += v.len;
     }
 
-    return tty_line { 0, ucells, std::string() };
+    return uline;
 }
 
-void tty_line::pack_inplace()
+tty_line& tty_line_store::get_line(llong lline, bool edit)
 {
-    if (pcount == 0) *this = pack();
+    llong cl = lline & (line_cache_size - 1);
+    llong olline = tty_int48_get(cache[cl].lline);
+
+    if (olline != lline)
+    {
+        if (olline >= 0 && cache[cl].dirty) {
+            lines[olline] = pack(cache[cl].ldata);
+        }
+        cache[cl].ldata = unpack(lines[lline]);
+        cache[cl].lline = tty_int48_set(lline);
+    }
+
+    cache[cl].dirty |= edit;
+
+    return cache[cl].ldata;
 }
 
-void tty_line::unpack_inplace()
+llong tty_line_store::count_cells(tty_packed_line &pline)
 {
-    if (pcount > 0) *this = unpack();
+    llong o = 0;
+    llong t = tty_int48_get(pline.text_offset);
+    llong c = tty_int48_get(pline.text_count);
+    while (o < c) {
+        utf32_code v = utf8_to_utf32_code(&text[t + o]);
+        o += v.len;
+    }
+    return o;
 }
 
-void tty_line::clear()
+llong tty_line_store::count_cells(llong lline)
 {
-    pcount = 0;
-    cells.clear();
-    utf8.clear();
-    cells.shrink_to_fit();
-    utf8.shrink_to_fit();
+    llong cl = lline & (line_cache_size - 1);
+
+    if (tty_int48_get(cache[cl].lline) == lline) {
+        return cache[cl].ldata.cells.size();
+    } else {
+        return count_cells(lines[lline]);
+    }
+}
+
+void tty_line_store::clear_line(llong lline)
+{
+    llong cl = lline & (line_cache_size - 1);
+
+    if (tty_int48_get(cache[cl].lline) == lline && cache[cl].ldata.cells.size() > 0) {
+        cache[cl].ldata.cells.clear();
+        cache[cl].dirty = true;
+    }
+
+    lines[lline].text_count = tty_int48_set(0);
+    lines[lline].cell_count = tty_int48_set(0);
+}
+
+void tty_line_store::invalidate_cache()
+{
+    for (llong cl = 0; cl < line_cache_size; cl++) {
+        llong olline = tty_int48_get(cache[cl].lline);
+        if (olline >= 0 && cache[cl].dirty) {
+            lines[olline] = pack(cache[cl].ldata);
+            cache[cl].lline = tty_int48_set(-1);
+        }
+    }
 }
 
 void tty_teletype_impl::update_offsets()
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
     size_t cols = ws.vis_cols;
-    size_t vlstart, vl;
+    llong vlstart, vl;
 
     if (!wrap_enabled) {
-        voffsets.clear();
-        loffsets.clear();
+        hist.voffsets.clear();
+        hist.loffsets.clear();
         return;
     }
 
@@ -348,30 +458,30 @@ void tty_teletype_impl::update_offsets()
     if (min_row == 0) {
         vlstart = 0;
     } else {
-        auto &loff = loffsets[min_row - 1];
-        vlstart = loff.vline + loff.count;
+        auto &loff = hist.loffsets[min_row - 1];
+        vlstart = tty_int48_get(loff.vline) + tty_int48_get(loff.count);
     }
 
     /* count lines with wrap incrementally from min row */
     vl = vlstart;
-    for (size_t k = min_row; k < lines.size(); k++) {
-        size_t cell_count = lines[k].count();
-        size_t wrap_count = cell_count == 0 ? 1
+    for (llong k = min_row; k < hist.lines.size(); k++) {
+        llong cell_count = hist.count_cells(k);
+        llong wrap_count = cell_count == 0 ? 1
             : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
         vl += wrap_count;
     }
 
     /* write out indices incrementally from min row */
-    voffsets.resize(vl);
-    loffsets.resize(lines.size());
+    hist.voffsets.resize(vl);
+    hist.loffsets.resize(hist.lines.size());
     vl = vlstart;
-    for (size_t k = min_row; k < lines.size(); k++) {
-        size_t cell_count = lines[k].count();
-        size_t wrap_count = cell_count == 0 ? 1
+    for (llong k = min_row; k < hist.lines.size(); k++) {
+        llong cell_count = hist.count_cells(k);
+        llong wrap_count = cell_count == 0 ? 1
             : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
-        loffsets[k] = { vl, wrap_count };
-        for (size_t j = 0; j < wrap_count; j++, vl++) {
-            voffsets[vl] = { k, j * cols };
+        hist.loffsets[k] = { tty_int48_set(vl), tty_int48_set(wrap_count) };
+        for (llong j = 0; j < wrap_count; j++, vl++) {
+            hist.voffsets[vl] = { tty_int48_set(k), tty_int48_set(j * cols) };
         }
     }
 
@@ -384,9 +494,12 @@ tty_line_voff tty_teletype_impl::visible_to_logical(llong vline)
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
-        return voffsets[vline];
+        return tty_line_voff{
+            tty_int48_get(hist.voffsets[vline].lline),
+            tty_int48_get(hist.voffsets[vline].offset)
+        };
     } else {
-        return tty_line_voff{ (size_t)vline, 0 };
+        return tty_line_voff{ vline, 0 };
     }
 }
 
@@ -395,27 +508,30 @@ tty_line_loff tty_teletype_impl::logical_to_visible(llong lline)
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
-        return loffsets[lline];
+        return tty_line_loff{
+            tty_int48_get(hist.loffsets[lline].vline),
+            tty_int48_get(hist.loffsets[lline].count)
+        };
     } else {
-        return tty_line_loff{ (size_t)lline, 0 };
+        return tty_line_loff{ lline, 0 };
     }
 }
 
-tty_line tty_teletype_impl::get_line(llong lline)
+tty_line& tty_teletype_impl::get_line(llong lline)
 {
-    return lines[lline].unpack();
+    return hist.get_line(lline, false);
 }
 
 llong tty_teletype_impl::total_rows()
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
-    return wrap_enabled ? voffsets.size() : lines.size();
+    return wrap_enabled ? hist.voffsets.size() : hist.lines.size();
 }
 
 llong tty_teletype_impl::total_lines()
 {
-    return lines.size();
+    return hist.lines.size();
 }
 
 llong tty_teletype_impl::visible_rows()
@@ -433,11 +549,10 @@ llong tty_teletype_impl::visible_lines()
          * calculate the number of visible lines so that we can calculate
          * absolute position while considering dynamically wrapped lines.
          */
-        llong total_rows = wrap_enabled ? voffsets.size() : lines.size();
-        llong wrapped_rows = 0;
-        for (llong j = total_rows - 1, l = 0; l < rows && j >= 0; j--, l++)
+        llong row_count = total_rows(), wrapped_rows = 0;
+        for (llong j = row_count-1, l = 0; l < rows && j >= 0; j--, l++)
         {
-            if (j >= total_rows) continue;
+            if (j >= row_count) continue;
             if (visible_to_logical(j).offset > 0) wrapped_rows++;
         }
         return rows - wrapped_rows;
@@ -478,14 +593,11 @@ void tty_teletype_impl::set_row(llong row)
 {
     if (row < 0) row = 0;
     if (row != cur_row) {
-        lines[cur_row].pack_inplace();
-        if (row >= lines.size()) {
-            lines.resize(row + 1);
-        } else {
-            lines[row].unpack_inplace();
+        if (row >= hist.lines.size()) {
+            hist.lines.resize(row + 1);
         }
-        cur_row = row;
-        min_row = std::min(min_row, row);
+        min_row = std::min(min_row, (cur_row = row));
+        update_offsets();
     }
 }
 
@@ -503,8 +615,8 @@ void tty_teletype_impl::move_abs(llong row, llong col)
     if (row != -1) {
         update_offsets();
         llong vis_lines = visible_lines();
-        size_t new_row = std::max(0ll, std::min((llong)lines.size() - 1,
-                        (llong)lines.size() - vis_lines + row - 1));
+        size_t new_row = std::max(0ll, std::min((llong)hist.lines.size() - 1,
+                        (llong)hist.lines.size() - vis_lines + row - 1));
         set_row(new_row);
     }
     if (col != -1) {
@@ -554,18 +666,18 @@ void tty_teletype_impl::erase_screen(uint arg)
     Trace("erase_screen: %d\n", arg);
     switch (arg) {
     case tty_clear_end:
-        for (size_t row = cur_row; row < lines.size(); row++) {
-            lines[row].clear();
+        for (size_t row = cur_row; row < hist.lines.size(); row++) {
+            hist.clear_line(row);
         }
         break;
     case tty_clear_start:
-        for (ssize_t row = cur_row; row < lines.size(); row--) {
-            lines[row].clear();
+        for (ssize_t row = cur_row; row < hist.lines.size(); row--) {
+            hist.clear_line(row);
         }
         break;
     case tty_clear_all:
-        for (size_t row = 0; row < lines.size(); row++) {
-            lines[row].clear();
+        for (size_t row = 0; row < hist.lines.size(); row++) {
+            hist.clear_line(row);
         }
         move_abs(1, 1);
         break;
@@ -577,22 +689,26 @@ void tty_teletype_impl::erase_line(uint arg)
     Trace("erase_line: %d\n", arg);
     switch (arg) {
     case tty_clear_end:
-        if (cur_col < lines[cur_row].cells.size()) {
-            lines[cur_row].cells.resize(cur_col);
+        if (cur_col < hist.count_cells(cur_row)) {
+            tty_line &line = hist.get_line(cur_row, true);
+            line.cells.resize(cur_col);
         }
         break;
     case tty_clear_start:
-        if (cur_col < lines[cur_row].cells.size()) {
+        if (cur_col < hist.count_cells(cur_row)) {
+            tty_line &line = hist.get_line(cur_row, true);
             tty_cell cell = tmpl;
             cell.codepoint = ' ';
             for (size_t col = 0; col < cur_col; col++) {
-                lines[cur_row].cells[col] = cell;
+                line.cells[col] = cell;
             }
         }
         break;
-    case tty_clear_all:
-        lines[cur_row].cells.resize(0);
+    case tty_clear_all: {
+        tty_line &line = hist.get_line(cur_row, true);
+        line.cells.resize(0);
         break;
+    }
     }
 }
 
@@ -605,12 +721,11 @@ void tty_teletype_impl::insert_lines(uint arg)
     llong top = top_marg == 0 ? 1           : top_marg;
     llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
     llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
-    lines[cur_row].pack_inplace();
+    hist.invalidate_cache();
     for (uint i = 0; i < arg; i++) {
-        lines.insert(lines.begin() + cur_row, tty_line{});
-        lines.erase(lines.end() - 1 - scrolloff);
+        hist.lines.insert(hist.lines.begin() + cur_row, tty_packed_line{});
+        hist.lines.erase(hist.lines.end() - 1 - scrolloff);
     }
-    lines[cur_row].unpack_inplace();
     cur_col = 0;
 }
 
@@ -623,14 +738,13 @@ void tty_teletype_impl::delete_lines(uint arg)
     llong top = top_marg == 0 ? 1           : top_marg;
     llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
     llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
-    lines[cur_row].pack_inplace();
+    hist.invalidate_cache();
     for (uint i = 0; i < arg; i++) {
-        if (cur_row < lines.size()) {
-            lines.erase(lines.begin() + cur_row);
-            lines.insert(lines.end() - scrolloff, tty_line{});
+        if (cur_row < hist.lines.size()) {
+            hist.lines.erase(hist.lines.begin() + cur_row);
+            hist.lines.insert(hist.lines.end() - scrolloff, tty_packed_line{});
         }
     }
-    lines[cur_row].unpack_inplace();
     cur_col = 0;
 }
 
@@ -638,9 +752,10 @@ void tty_teletype_impl::delete_chars(uint arg)
 {
     Trace("delete_chars: %d\n", arg);
     for (size_t i = 0; i < arg; i++) {
-        if (cur_col < lines[cur_row].cells.size()) {
-            lines[cur_row].cells.erase(
-                lines[cur_row].cells.begin() + cur_col
+        if (cur_col < hist.count_cells(cur_row)) {
+            tty_line &line = hist.get_line(cur_row, true);
+            line.cells.erase(
+                line.cells.begin() + cur_col
             );
         }
     }
@@ -678,10 +793,11 @@ void tty_teletype_impl::handle_carriage_return()
 void tty_teletype_impl::handle_bare(uint c)
 {
     Trace("handle_bare: %s\n", char_str(c).c_str());
-    if (cur_col >= lines[cur_row].cells.size()) {
-        lines[cur_row].cells.resize(cur_col + 1);
+    tty_line &line = hist.get_line(cur_row, true);
+    if (cur_col >= line.cells.size()) {
+        line.cells.resize(cur_col + 1);
     }
-    lines[cur_row].cells[cur_col++] =
+    line.cells[cur_col++] =
         tty_cell{c, tmpl.flags, tmpl.fg, tmpl.bg};
 }
 
@@ -717,6 +833,35 @@ void tty_teletype_impl::osc(uint c)
     if (argc == 1 && argv[0] == 555) {
         Debug("osc: screen-capture\n");
         set_needs_capture();
+    } else if (argc == 1 && argv[0] == 556) {
+        size_t cache_cells = 0;
+        for (size_t i = 0; i < line_cache_size; i++) {
+            cache_cells += hist.cache[i].ldata.cells.size();
+        }
+        printf("=] stats [=============================================\n");
+        printf("tty_line_store.cache.lines = %9zu x %2zu (%9zu)\n",
+            hist.cache.size(), sizeof(tty_cached_line), hist.cache.size() * sizeof(tty_cached_line));
+        printf("tty_line_store.cache.cells = %9zu x %2zu (%9zu)\n",
+            cache_cells, sizeof(tty_cell), cache_cells * sizeof(tty_cell));
+        printf("tty_line_store.voffsets    = %9zu x %2zu (%9zu)\n",
+            hist.voffsets.size(), sizeof(tty_packed_voff), hist.voffsets.size() * sizeof(tty_packed_voff));
+        printf("tty_line_store.loffsets    = %9zu x %2zu (%9zu)\n",
+            hist.loffsets.size(), sizeof(tty_packed_loff), hist.loffsets.size() * sizeof(tty_packed_loff));
+        printf("tty_line_store.pack.lines  = %9zu x %2zu (%9zu)\n",
+            hist.lines.size(), sizeof(tty_packed_line), hist.lines.size() * sizeof(tty_packed_line));
+        printf("tty_line_store.pack.cells  = %9zu x %2zu (%9zu)\n",
+            hist.cells.size(), sizeof(tty_cell), hist.cells.size() * sizeof(tty_cell));
+        printf("tty_line_store.pack.text   = %9zu x %2zu (%9zu)\n",
+            hist.text.size(), sizeof(char), hist.text.size() * sizeof(char));
+        size_t total = hist.cache.size() * sizeof(tty_cached_line)
+                     + cache_cells * sizeof(tty_cell)
+                     + hist.voffsets.size() * sizeof(tty_packed_voff)
+                     + hist.loffsets.size() * sizeof(tty_packed_loff)
+                     + hist.lines.size() * sizeof(tty_packed_line)
+                     + hist.cells.size() * sizeof(tty_cell)
+                     + hist.text.size() * sizeof(char);
+        printf("-------------------------------------------------------\n");
+        printf("tty_line_store.total       = %14s (%9zu)\n", "", total);
     }
 }
 
@@ -798,7 +943,7 @@ void tty_teletype_impl::csi_dsr()
         update_offsets();
         llong vis_lines = visible_lines();
         llong col = cur_col + 1;
-        llong row = cur_row - (lines.size() - vis_lines) + 1;
+        llong row = cur_row - (hist.lines.size() - vis_lines) + 1;
         row = std::max(1ll, std::min(row, vis_lines));
         int len = snprintf(buf, sizeof(buf), "\x1b[%llu;%lluR", row, col);
         write(buf, len);
@@ -818,7 +963,7 @@ void tty_teletype_impl::csi(uint c)
     switch (c) {
     case '@': /* insert blanks */
     {
-        tty_line &line = lines[cur_row];
+        tty_line &line = hist.get_line(cur_row, true);
         int n = opt_arg(0, 0);
         if (cur_col < line.cells.size()) {
             tty_cell cell = tmpl;
