@@ -1607,6 +1607,7 @@ void tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
     int c;
     switch (action) {
     case GLFW_PRESS:
+    case GLFW_REPEAT:
         if ((flags & tty_flag_DECCKM) > 0) {
             switch (key) {
             case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
