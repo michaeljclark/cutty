@@ -27,6 +27,7 @@
 #include "ui9.h"
 #include "app.h"
 
+#include "timestamp.h"
 #include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"
@@ -47,6 +48,8 @@ static vec2 mouse_pos;
 static bool help_text = false;
 static bool overlay_stats = false;
 static bool execute_args = false;
+static bool enable_linenumbers = false;
+static bool enable_timestamps = false;
 
 static const char* default_path = "bash";
 static const char * const default_argv[] = { "-bash", NULL };
@@ -190,6 +193,13 @@ static void tty_app(int argc, char **argv)
     process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
 
+    if (enable_timestamps) {
+        cg->set_flag(tty_cellgrid_timestamps, true);
+    }
+    if (enable_linenumbers) {
+        cg->set_flag(tty_cellgrid_linenumbers, true);
+    }
+
     tty_style style = cg->get_style();
 
     window = glfwCreateWindow((int)style.width, (int)style.height, argv[0], NULL, NULL);
@@ -249,6 +259,8 @@ void print_help(int argc, char **argv)
         "  -t, --trace               log trace messages\n"
         "  -d, --debug               log debug messages\n"
         "  -x, --execute             execute remaining args\n"
+        "  -L, --line-numbers        enable line numbers column\n"
+        "  -T, --time-stamps         enable time stamps column\n"
         "  -y, --overlay-stats       show statistics overlay\n"
         "  -m, --enable-msdf         enable MSDF font rendering\n",
         argv[0]);
@@ -287,6 +299,12 @@ void parse_options(int argc, char **argv)
             i++;
         } else if (match_opt(argv[i], "-y", "--overlay-stats")) {
             overlay_stats = true;
+            i++;
+        } else if (match_opt(argv[i], "-L", "--line-numbers")) {
+            enable_linenumbers = true;
+            i++;
+        } else if (match_opt(argv[i], "-T", "--time-stamps")) {
+            enable_timestamps = true;
             i++;
         } else if (match_opt(argv[i], "-m", "--enable-msdf")) {
             manager.msdf_enabled = true;

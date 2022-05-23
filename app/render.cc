@@ -28,6 +28,7 @@
 #include "ui9.h"
 #include "app.h"
 
+#include "timestamp.h"
 #include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"

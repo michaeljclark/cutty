@@ -22,6 +22,8 @@
 #include "app.h"
 #include "utf8.h"
 #include "colors.h"
+
+#include "timestamp.h"
 #include "teletype.h"
 #include "process.h"
 

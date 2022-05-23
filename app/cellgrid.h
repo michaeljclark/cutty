@@ -2,14 +2,19 @@
 
 enum tty_cellgrid_flag
 {
-    tty_cellgrid_background = (1 << 0)
+    tty_cellgrid_background = (1 << 0),
+    tty_cellgrid_scrollbars = (1 << 1),
+    tty_cellgrid_timestamps = (1 << 2),
+    tty_cellgrid_linenumbers = (1 << 3)
 };
 
 enum tty_cellgrid_face
 {
+    tty_cellgrid_face_emoji,
     tty_cellgrid_face_regular,
     tty_cellgrid_face_bold,
-    tty_cellgrid_face_emoji
+    tty_cellgrid_face_condensed_regular,
+    tty_cellgrid_face_condensed_bold
 };
 
 struct tty_style

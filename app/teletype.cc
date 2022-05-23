@@ -9,6 +9,8 @@
 #include "app.h"
 #include "utf8.h"
 #include "colors.h"
+
+#include "timestamp.h"
 #include "teletype.h"
 #include "process.h"
 
@@ -71,6 +73,7 @@ struct tty_packed_line
     tty_int48 cell_offset;
     tty_int48 text_count;
     tty_int48 cell_count;
+    tty_timestamp tv;
 };
 
 struct tty_cached_line
@@ -123,6 +126,8 @@ struct tty_teletype_impl : tty_teletype
     std::vector<uchar> out_buf;
     ssize_t out_start;
     ssize_t out_end;
+
+    tty_timestamp tv;
 
     tty_cell tmpl;
     tty_line_store hist;
@@ -353,6 +358,7 @@ tty_packed_line tty_line_store::pack(tty_line &uline)
         tty_int48_set(coff),
         tty_int48_set(tcount),
         tty_int48_set(ccount),
+        { uline.tv.vec[0], uline.tv.vec[1], uline.tv.vec[2] }
     };
 }
 
@@ -372,6 +378,10 @@ tty_line tty_line_store::unpack(tty_packed_line &pline)
         uline.cells.push_back(tty_cell{(uint)v.code, t.flags, t.fg, t.bg});
         o += v.len;
     }
+
+    uline.tv.vec[0] = pline.tv.vec[0];
+    uline.tv.vec[1] = pline.tv.vec[1];
+    uline.tv.vec[2] = pline.tv.vec[2];
 
     return uline;
 }
@@ -467,7 +477,7 @@ void tty_teletype_impl::update_offsets()
     for (llong k = min_row; k < hist.lines.size(); k++) {
         llong cell_count = hist.count_cells(k);
         llong wrap_count = cell_count == 0 ? 1
-            : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
+            : cols == 0 ? 1 : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
         vl += wrap_count;
     }
 
@@ -478,7 +488,7 @@ void tty_teletype_impl::update_offsets()
     for (llong k = min_row; k < hist.lines.size(); k++) {
         llong cell_count = hist.count_cells(k);
         llong wrap_count = cell_count == 0 ? 1
-            : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
+            : cols == 0 ? 1 : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
         hist.loffsets[k] = { tty_int48_set(vl), tty_int48_set(wrap_count) };
         for (llong j = 0; j < wrap_count; j++, vl++) {
             hist.voffsets[vl] = { tty_int48_set(k), tty_int48_set(j * cols) };
@@ -1170,6 +1180,8 @@ restart:
             } else {
                 handle_bare(c);
             }
+            tty_line &line = hist.get_line(cur_row, true);
+            memcpy(&line.tv, &tv, sizeof(tv));
         }
         break;
     case tty_state_utf4:
@@ -1444,6 +1456,8 @@ ssize_t tty_teletype_impl::io()
     pfds[0].fd = fd;
     pfds[0].events = (do_poll_in & POLLIN) | (do_poll_out & POLLOUT);
     ret = poll(pfds, array_size(pfds), io_poll_timeout);
+
+    timestamp_gettime(tty_clock_realtime, &tv);
 
     if (pfds[0].revents & POLLOUT) {
         ssize_t count;

@@ -25,6 +25,7 @@
 #include "file.h"
 #include "ui9.h"
 
+#include "timestamp.h"
 #include "teletype.h"
 #include "cellgrid.h"
 #include "typeface.h"
@@ -38,6 +39,8 @@
 const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
 const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
 const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
+const char *mono1_condensed_regular_font_path = "fonts/NotoSansMono_ExtraCondensed-Regular.ttf";
+const char *mono1_condensed_bold_font_path = "fonts/NotoSansMono_ExtraCondensed-Bold.ttf";
 
 uint tty_typeface_lookup_glyph(font_face *face, uint codepoint)
 {

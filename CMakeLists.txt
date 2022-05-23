@@ -171,6 +171,7 @@ set(cutty_sources
     app/process.cc
     app/render.cc
     app/teletype.cc
+    app/timestamp.cc
     app/typeface.cc)
 
 include_directories(app)

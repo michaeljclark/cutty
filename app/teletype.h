@@ -62,6 +62,7 @@ struct tty_cell
 struct tty_line
 {
     std::vector<tty_cell> cells;
+    tty_timestamp tv;
 };
 
 enum tty_char

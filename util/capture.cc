@@ -26,8 +26,9 @@
 #include "file.h"
 #include "format.h"
 #include "app.h"
-
 #include "ui9.h"
+
+#include "timestamp.h"
 #include "teletype.h"
 #include "process.h"
 #include "cellgrid.h"
@@ -101,6 +102,7 @@ static void capture_app(int argc, char **argv)
     process = std::unique_ptr<tty_process>(tty_process_new());
     render->set_overlay(overlay_stats);
     cg->set_flag(tty_cellgrid_background, false);
+    cg->set_flag(tty_cellgrid_scrollbars, false);
 
     tty_style style = cg->get_style();
     osmesa_init((uint)style.width, (uint)style.height);
