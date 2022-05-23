@@ -99,9 +99,10 @@ struct tty_cellgrid_impl : tty_cellgrid
     tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty, bool test_mode);
 
     void draw_background(draw_list &batch);
-    void draw_timestamps(draw_list &batch, float ox, float oy, float field_width);
-    void draw_linenumbers(draw_list &batch, float ox, float oy, float field_width);
-    void draw_cellgrid(draw_list &batch, float ox, float oy, float field_width);
+    void draw_timestamps(draw_list &batch, tty_winsize ws, float ox, float oy, float field_width);
+    void draw_linenumbers(draw_list &batch, tty_winsize ws, float ox, float oy, float field_width);
+    void draw_cellgrid(draw_list &batch, tty_winsize ws, float ox, float oy, float field_width);
+    void draw_cursor(draw_list &batch, tty_winsize ws, float ox, float oy, float field_width);
     void draw_scrollbars(draw_list &batch);
 
     virtual void draw(draw_list &batch);
@@ -146,7 +147,7 @@ tty_cellgrid_impl::tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty
     text_lang = "en";
     scroll_row = 0;
     scroll_col = 0;
-    flags = tty_cellgrid_scrollbars | tty_cellgrid_background;
+    flags = tty_cellgrid_scrollbars | tty_cellgrid_background | tty_cellgrid_focused;
 
     vscroll = new ui9::Scroller();
     vscroll->set_orientation(ui9::axis_2D::vertical);
@@ -338,14 +339,13 @@ void tty_cellgrid_impl::draw_background(draw_list &batch)
     canvas.emit(batch);
 }
 
-void tty_cellgrid_impl::draw_timestamps(draw_list &batch, float ox, float oy,
-    float field_width)
+void tty_cellgrid_impl::draw_timestamps(draw_list &batch, tty_winsize ws,
+    float ox, float oy, float field_width)
 {
     text_renderer_ft renderer(manager, style.rscale);
     std::vector<glyph_shape> shapes;
 
-    tty_winsize ws = get_winsize();
-    int rows = ws.vis_rows, cols = ws.vis_cols;
+    int rows = ws.vis_rows;
     int fit_cols = (int)roundf(std::max(0.f, field_width) / fmc.advance);
     int font_size = (int)(fm.size * 64.0f);
     float glyph_height = fm.height - fm.descender;
@@ -381,14 +381,13 @@ void tty_cellgrid_impl::draw_timestamps(draw_list &batch, float ox, float oy,
     );
 }
 
-void tty_cellgrid_impl::draw_linenumbers(draw_list &batch, float ox, float oy,
-    float field_width)
+void tty_cellgrid_impl::draw_linenumbers(draw_list &batch, tty_winsize ws,
+    float ox, float oy, float field_width)
 {
     text_renderer_ft renderer(manager, style.rscale);
     std::vector<glyph_shape> shapes;
 
-    tty_winsize ws = get_winsize();
-    int rows = ws.vis_rows, cols = ws.vis_cols;
+    int rows = ws.vis_rows;
     int fit_cols = (int)roundf(std::max(0.f, field_width) / fmc.advance);
     int font_size = (int)(fm.size * 64.0f);
     float glyph_height = fm.height - fm.descender;
@@ -423,19 +422,17 @@ void tty_cellgrid_impl::draw_linenumbers(draw_list &batch, float ox, float oy,
     );
 }
 
-void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, float ox, float oy,
-    float field_width)
+void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, tty_winsize ws,
+    float ox, float oy, float field_width)
 {
     text_renderer_ft renderer(manager, style.rscale);
     std::vector<glyph_shape> shapes;
 
-    tty_winsize ws = get_winsize();
     int rows = ws.vis_rows, cols = ws.vis_cols;
     int fit_cols = (int)floorf(std::max(0.f, field_width) / fm.advance);
     int font_size = (int)(fm.size * 64.0f);
     float glyph_height = fm.height - fm.descender;
     float y_offset = floorf((fm.leading - glyph_height)/2.f) + fm.descender;
-    int clrow = tty->get_cur_row(), clcol = tty->get_cur_col();
 
     auto render_block = [&](tty_font_metric &fm, int row, int col, int h, int w, uint c)
     {
@@ -451,8 +448,7 @@ void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, float ox, float oy,
         canvas.set_stroke_width(sw);
         canvas.set_fill_brush(MVGBrush{MVGBrushNone, { }, { }});
         canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { color(c) }});
-        MVGPath *p1 = canvas.new_path({0.0f,0.0f},{lw,sw});
-        p1->pos = { (x1+x2)*0.5f, y };
+        MVGPath *p1 = canvas.new_path({ (x1+x2)*0.5f, y },{lw,sw});
         p1->new_line({0.0f,0.0f}, {lw,0.0f});
     };
 
@@ -517,19 +513,46 @@ void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, float ox, float oy,
     );
 
     canvas.emit(batch);
+}
+
+void tty_cellgrid_impl::draw_cursor(draw_list &batch, tty_winsize ws,
+    float ox, float oy, float field_width)
+{
+    int rows = ws.vis_rows;
+    int fit_cols = (int)floorf(std::max(0.f, field_width) / fm.advance);
+    int clrow = tty->get_cur_row(), clcol = tty->get_cur_col();
+
+    auto render_block = [&](tty_font_metric &fm, int row, int col, int h, int w, uint c)
+    {
+        rect(batch, oy - row * fm.leading, ox + col * fm.advance,
+            h * fm.leading, w * fm.advance, c);
+    };
+
+    auto render_rect = [&](tty_font_metric &fm, int row, int col, int h, int w, uint c)
+    {
+        float sw = 2.0f;
+        float x1 = ox + col * fm.advance, x2 = x1 + w * fm.advance;
+        float y2 = oy - row * fm.leading, y1 = y2 - h * fm.leading;
+        canvas.set_stroke_width(sw);
+        canvas.set_fill_brush(MVGBrush{MVGBrushNone, { }, { }});
+        canvas.set_stroke_brush(MVGBrush{MVGBrushSolid, { }, { color(c) }});
+        MVGRect *r = canvas.new_rectangle({(x1+x2)*0.5f, (y1+y2)*0.5f},{(x2-x1)*0.5f, (y2-y1)*0.5f});
+    };
 
     /* render cursor */
-    if (tty->has_flag(tty_flag_DECTCEM)) {
-        draw_loop(rows, fit_cols,
-            [&] (auto line, auto k, auto l, auto o, auto i) {
-                if (clrow == k && clcol >= o && clcol < o + cols && clcol < fit_cols) {
+    draw_loop(rows, fit_cols,
+        [&] (auto line, auto k, auto l, auto o, auto i) {
+            if (clrow == k && clcol >= o && clcol < o + fit_cols) {
+                if (has_flag(tty_cellgrid_focused)) {
                     render_block(fm, l, clcol - o, 1, 1, style.cursor_color);
+                } else {
+                    render_rect(fm, l, clcol - o, 1, 1, style.cursor_color);
                 }
-            },
-            [&] (auto cell, auto k, auto l, auto o, auto i) {},
-            [&] (auto line, auto k, auto l, auto o, auto i) {}
-        );
-    }
+            }
+        },
+        [&] (auto cell, auto k, auto l, auto o, auto i) {},
+        [&] (auto line, auto k, auto l, auto o, auto i) {}
+    );
 }
 
 void tty_cellgrid_impl::draw_scrollbars(draw_list &batch)
@@ -564,25 +587,31 @@ void tty_cellgrid_impl::draw(draw_list &batch)
     float oy = style.height - style.margin;
     float available_width = style.width - style.margin * 2.f;
 
+    tty_winsize ws = get_winsize();
+
     if ((flags & tty_cellgrid_background) > 0) {
         draw_background(batch);
     }
 
     if ((flags & tty_cellgrid_linenumbers) > 0) {
         float field_width = linenumber_field_width(linenumber_width, fmc, available_width);
-        draw_linenumbers(batch, ox, oy, field_width);
+        draw_linenumbers(batch, ws, ox, oy, field_width);
         available_width = std::max(0.f, available_width - (field_width + column_padding));
         ox += field_width + column_padding;
     }
 
     if ((flags & tty_cellgrid_timestamps) > 0) {
         float field_width = timestamp_field_width(timestamp_format, fmc, available_width);
-        draw_timestamps(batch, ox, oy, field_width);
+        draw_timestamps(batch, ws, ox, oy, field_width);
         available_width = std::max(0.f, available_width - (field_width + column_padding));
         ox += field_width + column_padding;
     }
 
-    draw_cellgrid(batch, ox, oy, available_width);
+    draw_cellgrid(batch, ws, ox, oy, available_width);
+
+    if (tty->has_flag(tty_flag_DECTCEM)) {
+        draw_cursor(batch, ws, ox, oy, available_width);
+    }
 
     if ((flags & tty_cellgrid_scrollbars) > 0) {
         draw_scrollbars(batch);

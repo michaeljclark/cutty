@@ -148,8 +148,16 @@ static void reshape()
 static void framebuffer_size(GLFWwindow* window, int w, int h)
 {
     tty->set_needs_update();
-
     reshape();
+    render->update();
+    render->display();
+    glfwSwapBuffers(window);
+}
+
+static void window_focus(GLFWwindow* window, int focused)
+{
+    tty->set_needs_update();
+    cg->set_flag(tty_cellgrid_focused, focused);
     render->update();
     render->display();
     glfwSwapBuffers(window);
@@ -211,6 +219,7 @@ static void tty_app(int argc, char **argv)
     glfwSetMouseButtonCallback(window, mouse_button);
     glfwSetCursorPosCallback(window, cursor_position);
     glfwSetFramebufferSizeCallback(window, framebuffer_size);
+    glfwSetWindowFocusCallback(window, window_focus);
     glfwSetWindowRefreshCallback(window, window_refresh);
     glfwSetWindowPosCallback(window, window_pos);
     glfwSetWindowSizeCallback(window, window_size);
