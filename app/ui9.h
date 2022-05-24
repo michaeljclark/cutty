@@ -1552,11 +1552,9 @@ struct Slider : Visible
             set_value(std::min(std::max(new_value, 0.0f), 1.0f));
         }
 
-        if (e->qualifier == released && inside) {
-            inside = false;
-        }
-
-        return inside;
+        bool was_inside = inside;
+        inside &= (e->qualifier != released);
+        return was_inside;
     }
 };
 
@@ -1686,12 +1684,9 @@ struct Switch : Visible
             //
         }
 
-        if (e->qualifier == released && inside) {
-            inside = false;
-            set_value(!value);
-        }
-
-        return inside;
+        bool was_inside = inside;
+        inside &= (e->qualifier != released);
+        return was_inside;
     }
 };
 
@@ -1832,46 +1827,50 @@ struct Scroller : Visible
         vec3 size_remaining = assigned_size - m();
         vec3 half_size = size_remaining / 2.0f;
         vec3 gutter_dist = me->pos - position;
-        float gutter_thickness = gutter_thickness/2.0f + border[0];
-        float bar_dist = 0;
+        bool in_bar = false;
         if (axis == horizontal) {
             float bar_offset = -half_size.x + bar_length/2 + (size_remaining.x - bar_length) * value;
-            bar_dist = glm::distance(position + vec3(bar_offset, 0, 0), me->pos);
+            vec3 bar_dist = position + vec3(bar_offset, 0, 0) - me->pos;
+            in_bar = fabsf(bar_dist.x) < (bar_length/2) &&
+                     fabsf(bar_dist.y) < (bar_thickness/2);
         }
         if (axis == vertical) {
             float bar_offset = -half_size.y + bar_length/2 + (size_remaining.y - bar_length) * (1.0f - value);
-            bar_dist = glm::distance(position + vec3(0, bar_offset, 0), me->pos);
+            vec3 bar_dist = position + vec3(0, bar_offset, 0) - me->pos;
+            in_bar = fabsf(bar_dist.y) < (bar_length/2) &&
+                     fabsf(bar_dist.x) < (bar_thickness/2);
         }
-        bool in_bar = bar_dist < (bar_length + border[0]);
 
         float new_value = 0.0f;
         bool in_gutter = false;
 
         if (axis == horizontal) {
             new_value = (gutter_dist.x + half_size.x) / (size_remaining.x - bar_length);
-            in_gutter = gutter_dist.x >= -half_size.x && gutter_dist.x <= half_size.x &&
-                        gutter_dist.y >= -gutter_thickness && gutter_dist.y <= gutter_thickness;
+            in_gutter = fabsf(gutter_dist.x) <= half_size.x &&
+                        fabsf(gutter_dist.y) <= gutter_thickness/2;
         }
 
         if (axis == vertical) {
             new_value = 1.0f - ((gutter_dist.y + half_size.y) / (size_remaining.y - bar_length));
-            in_gutter = gutter_dist.y >= -half_size.y && gutter_dist.y <= half_size.y &&
-                        gutter_dist.x >= -gutter_thickness && gutter_dist.x <= gutter_thickness;
+            in_gutter = fabsf(gutter_dist.y) <= half_size.y &&
+                        fabsf(gutter_dist.x) <= gutter_thickness/2;
         }
 
         if (e->qualifier == pressed && !inside) {
             inside = in_bar || in_gutter;
         }
 
-        if (inside) {
+        bool handled = (e->qualifier == pressed && in_bar) ||
+                       (e->qualifier == motion && inside) ||
+                       (e->qualifier == released && (in_bar || in_gutter));
+
+        if (handled) {
             set_value(std::min(std::max(new_value, 0.0f), 1.0f));
         }
 
-        if (e->qualifier == released && inside) {
-            inside = false;
-        }
+        inside &= (e->qualifier != released);
 
-        return inside;
+        return handled;
     }
 };
 
