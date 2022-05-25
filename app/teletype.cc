@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cassert>
+#include <climits>
 
 #include <time.h>
 #include <poll.h>
@@ -131,6 +132,8 @@ struct tty_teletype_impl : tty_teletype
 
     tty_cell tmpl;
     tty_line_store hist;
+    tty_line empty_line;
+    tty_cell_span sel;
     tty_winsize ws;
     llong cur_row;
     llong cur_col;
@@ -150,6 +153,9 @@ struct tty_teletype_impl : tty_teletype
     virtual tty_line_voff visible_to_logical(llong vline);
     virtual tty_line_loff logical_to_visible(llong lline);
     virtual tty_line& get_line(llong lline);
+    virtual void set_selection(tty_cell_span sel);
+    virtual tty_cell_span get_selection();
+    virtual std::string get_selected_text();
     virtual llong total_rows();
     virtual llong total_lines();
     virtual llong visible_rows();
@@ -164,6 +170,8 @@ struct tty_teletype_impl : tty_teletype
     virtual ssize_t io();
     virtual ssize_t proc();
     virtual ssize_t write(const char *buf, size_t len);
+    virtual void special_ckm(int key, int mods);
+    virtual void special_key(int key, int mods);
     virtual void keyboard(int key, int scancode, int action, int mods);
 
 protected:
@@ -221,6 +229,8 @@ tty_teletype_impl::tty_teletype_impl() :
     out_end(0),
     tmpl{},
     hist(),
+    empty_line{},
+    sel{null_cell_ref, null_cell_ref},
     ws{0,0,0,0},
     cur_row(0),
     cur_col(0),
@@ -504,10 +514,18 @@ tty_line_voff tty_teletype_impl::visible_to_logical(llong vline)
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
-        return tty_line_voff{
-            tty_int48_get(hist.voffsets[vline].lline),
-            tty_int48_get(hist.voffsets[vline].offset)
-        };
+        if (vline < 0) {
+            return tty_line_voff{ -1, 0 };
+        }
+        else if (vline < hist.voffsets.size()) {
+            return tty_line_voff{
+                tty_int48_get(hist.voffsets[vline].lline),
+                tty_int48_get(hist.voffsets[vline].offset)
+            };
+        }
+        else {
+            return tty_line_voff{ (llong)hist.loffsets.size(), 0 };
+        }
     } else {
         return tty_line_voff{ vline, 0 };
     }
@@ -518,10 +536,18 @@ tty_line_loff tty_teletype_impl::logical_to_visible(llong lline)
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
-        return tty_line_loff{
-            tty_int48_get(hist.loffsets[lline].vline),
-            tty_int48_get(hist.loffsets[lline].count)
-        };
+        if (lline < 0) {
+            return tty_line_loff{ -1, 0 };
+        }
+        if (lline < hist.loffsets.size()) {
+            return tty_line_loff{
+                tty_int48_get(hist.loffsets[lline].vline),
+                tty_int48_get(hist.loffsets[lline].count)
+            };
+        } else {
+            size_t last = hist.loffsets.size() - 1;
+            return tty_line_loff{ (llong)hist.voffsets.size(), 0 };
+        }
     } else {
         return tty_line_loff{ lline, 0 };
     }
@@ -529,7 +555,52 @@ tty_line_loff tty_teletype_impl::logical_to_visible(llong lline)
 
 tty_line& tty_teletype_impl::get_line(llong lline)
 {
-    return hist.get_line(lline, false);
+    if (lline >= 0 && lline < hist.lines.size()) {
+        return hist.get_line(lline, false);
+    } else {
+        return empty_line;
+    }
+}
+
+void tty_teletype_impl::set_selection(tty_cell_span selection)
+{
+    sel = selection;
+}
+
+tty_cell_span tty_teletype_impl::get_selection()
+{
+    return sel;
+}
+
+std::string tty_teletype_impl::get_selected_text()
+{
+    tty_cell_span span = sel;
+    std::string text;
+
+    if (span.start == null_cell_ref && span.end == null_cell_ref) {
+        goto out;
+    }
+
+    if (span.start > span.end) {
+        std::swap(span.start, span.end);
+    }
+
+    for (llong lline = span.start.row; lline <= span.end.row; lline++) {
+        tty_line line = get_line(lline);
+        llong count = (llong)line.cells.size();
+        llong s = std::max(0ll, lline == span.start.row ? span.start.col : 0ll);
+        llong e = std::min(count-1ll, lline == span.end.row ? span.end.col : count-1ll);
+        for (; s <= e; s++) {
+            char u[8];
+            llong o = text.size();
+            llong l = utf32_to_utf8(u, sizeof(u), line.cells[s].codepoint);
+            text.append(u);
+        }
+        if (s == count && lline != span.end.row) text.append("\n");
+    }
+
+out:
+    return text;
 }
 
 llong tty_teletype_impl::total_rows()
@@ -1616,78 +1687,91 @@ int tty_teletype_impl::keycode_to_char(int key, int mods)
     return 0;
 }
 
+void tty_teletype_impl::special_ckm(int key, int mods)
+{
+    if (mods) return;
+    switch (key) {
+    case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
+    case GLFW_KEY_ENTER: send(tty_char_LF); break;
+    case GLFW_KEY_TAB: send(tty_char_HT); break;
+    case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
+    case GLFW_KEY_INSERT: write("\x1b[2~", 4); break;
+    case GLFW_KEY_DELETE: write("\x1b[3~", 4); break;
+    case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break;
+    case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break;
+    case GLFW_KEY_UP: write("\x1bOA", 3); break;
+    case GLFW_KEY_DOWN: write("\x1bOB", 3); break;
+    case GLFW_KEY_RIGHT: write("\x1bOC", 3); break;
+    case GLFW_KEY_LEFT: write("\x1bOD", 3); break;
+    case GLFW_KEY_HOME: write("\x1bOH", 3); break;
+    case GLFW_KEY_END: write("\x1bOF", 3); break;
+    case GLFW_KEY_F1: write("\x1bOP", 3); break;
+    case GLFW_KEY_F2: write("\x1bOQ", 3); break;
+    case GLFW_KEY_F3: write("\x1bOR", 3); break;
+    case GLFW_KEY_F4: write("\x1bOS", 3); break;
+    case GLFW_KEY_F5: write("\x1b[15~", 5); break;
+    case GLFW_KEY_F6: write("\x1b[17~", 5); break;
+    case GLFW_KEY_F7: write("\x1b[18~", 5); break;
+    case GLFW_KEY_F8: write("\x1b[19~", 5); break;
+    case GLFW_KEY_F9: write("\x1b[20~", 5); break;
+    case GLFW_KEY_F10: write("\x1b[21~", 5); break;
+    case GLFW_KEY_F11: write("\x1b[23~", 5); break;
+    case GLFW_KEY_F12: write("\x1b[24~", 5); break;
+    }
+}
+
+void tty_teletype_impl::special_key(int key, int mods)
+{
+    if (mods) return;
+    switch (key) {
+    case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
+    case GLFW_KEY_ENTER: send(tty_char_LF); break;
+    case GLFW_KEY_TAB: send(tty_char_HT); break;
+    case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
+    case GLFW_KEY_INSERT: write("\x1b[2~", 4); break;
+    case GLFW_KEY_DELETE: write("\x1b[3~", 4); break;
+    case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break;
+    case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break;
+    case GLFW_KEY_UP: write("\x1b[A", 3); break;
+    case GLFW_KEY_DOWN: write("\x1b[B", 3); break;
+    case GLFW_KEY_RIGHT: write("\x1b[C", 3); break;
+    case GLFW_KEY_LEFT: write("\x1b[D", 3); break;
+    case GLFW_KEY_HOME: write("\x1b[H", 3); break;
+    case GLFW_KEY_END: write("\x1b[F", 3); break;
+    case GLFW_KEY_F1: write("\x1b[11~", 5); break;
+    case GLFW_KEY_F2: write("\x1b[12~", 5); break;
+    case GLFW_KEY_F3: write("\x1b[13~", 5); break;
+    case GLFW_KEY_F4: write("\x1b[14~", 5); break;
+    case GLFW_KEY_F5: write("\x1b[15~", 5); break;
+    case GLFW_KEY_F6: write("\x1b[17~", 5); break;
+    case GLFW_KEY_F7: write("\x1b[18~", 5); break;
+    case GLFW_KEY_F8: write("\x1b[19~", 5); break;
+    case GLFW_KEY_F9: write("\x1b[20~", 5); break;
+    case GLFW_KEY_F10: write("\x1b[21~", 5); break;
+    case GLFW_KEY_F11: write("\x1b[23~", 5); break;
+    case GLFW_KEY_F12: write("\x1b[24~", 5); break;
+    }
+}
+
 void tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
 {
+    // GLFW_MOD_ALT   = PC-Alt, MAC-Opt
+    // GLFW_MOD_SUPER = PC-Win, MAC-Cmd
     int c;
     switch (action) {
     case GLFW_PRESS:
     case GLFW_REPEAT:
-        if ((flags & tty_flag_DECCKM) > 0) {
-            switch (key) {
-            case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
-            case GLFW_KEY_ENTER: send(tty_char_LF); break;
-            case GLFW_KEY_TAB: send(tty_char_HT); break;
-            case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
-            case GLFW_KEY_INSERT: write("\x1b[2~", 4); break; // ?
-            case GLFW_KEY_DELETE: write("\x1b[3~", 4); break; // ?
-            case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break; // ?
-            case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break; // ?
-            case GLFW_KEY_UP: write("\x1bOA", 3); break;
-            case GLFW_KEY_DOWN: write("\x1bOB", 3); break;
-            case GLFW_KEY_RIGHT: write("\x1bOC", 3); break;
-            case GLFW_KEY_LEFT: write("\x1bOD", 3); break;
-            case GLFW_KEY_HOME: write("\x1bOH", 3); break;
-            case GLFW_KEY_END: write("\x1bOF", 3); break;
-            case GLFW_KEY_F1: write("\x1bOP", 3); break;
-            case GLFW_KEY_F2: write("\x1bOQ", 3); break;
-            case GLFW_KEY_F3: write("\x1bOR", 3); break;
-            case GLFW_KEY_F4: write("\x1bOS", 3); break;
-            case GLFW_KEY_F5: write("\x1b[15~", 5); break; // ?
-            case GLFW_KEY_F6: write("\x1b[17~", 5); break; // ?
-            case GLFW_KEY_F7: write("\x1b[18~", 5); break; // ?
-            case GLFW_KEY_F8: write("\x1b[19~", 5); break; // ?
-            case GLFW_KEY_F9: write("\x1b[20~", 5); break; // ?
-            case GLFW_KEY_F10: write("\x1b[21~", 5); break; // ?
-            case GLFW_KEY_F11: write("\x1b[23~", 5); break; // ?
-            case GLFW_KEY_F12: write("\x1b[24~", 5); break; // ?
-            default:
-                c = keycode_to_char(key, mods);
-                if (c) send(c);
-                break;
-            }
+        if ((c = keycode_to_char(key, mods))) {
+            send(c);
+        } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_C) {
+            app_set_clipboard(get_selected_text().c_str());
+        } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_V) {
+            const char *str = app_get_clipboard();
+            write(str, strlen(str));
+        } else if ((flags & tty_flag_DECCKM) > 0) {
+            special_ckm(key, mods);
         } else {
-            switch (key) {
-            case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
-            case GLFW_KEY_ENTER: send(tty_char_LF); break;
-            case GLFW_KEY_TAB: send(tty_char_HT); break;
-            case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
-            case GLFW_KEY_INSERT: write("\x1b[2~", 4); break;
-            case GLFW_KEY_DELETE: write("\x1b[3~", 4); break;
-            case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break;
-            case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break;
-            case GLFW_KEY_UP: write("\x1b[A", 3); break;
-            case GLFW_KEY_DOWN: write("\x1b[B", 3); break;
-            case GLFW_KEY_RIGHT: write("\x1b[C", 3); break;
-            case GLFW_KEY_LEFT: write("\x1b[D", 3); break;
-            case GLFW_KEY_HOME: write("\x1b[H", 3); break;
-            case GLFW_KEY_END: write("\x1b[F", 3); break;
-            case GLFW_KEY_F1: write("\x1b[11~", 5); break;
-            case GLFW_KEY_F2: write("\x1b[12~", 5); break;
-            case GLFW_KEY_F3: write("\x1b[13~", 5); break;
-            case GLFW_KEY_F4: write("\x1b[14~", 5); break;
-            case GLFW_KEY_F5: write("\x1b[15~", 5); break;
-            case GLFW_KEY_F6: write("\x1b[17~", 5); break;
-            case GLFW_KEY_F7: write("\x1b[18~", 5); break;
-            case GLFW_KEY_F8: write("\x1b[19~", 5); break;
-            case GLFW_KEY_F9: write("\x1b[20~", 5); break;
-            case GLFW_KEY_F10: write("\x1b[21~", 5); break;
-            case GLFW_KEY_F11: write("\x1b[23~", 5); break;
-            case GLFW_KEY_F12: write("\x1b[24~", 5); break;
-            default:
-                c = keycode_to_char(key, mods);
-                if (c) send(c);
-                break;
-            }
+            special_key(key, mods);
         }
         break;
     }

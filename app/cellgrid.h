@@ -53,6 +53,7 @@ struct tty_cellgrid
     virtual tty_teletype* get_teletype() = 0;
     virtual MVGCanvas* get_canvas() = 0;
     virtual ui9::Root* get_root() = 0;
+    virtual bool mouse_event(ui9::MouseEvent *me) = 0;
 };
 
 tty_cellgrid* tty_cellgrid_new(font_manager_ft *manager, tty_teletype *term,

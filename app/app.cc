@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <climits>
 
 #include <functional>
 #include <algorithm>
@@ -24,8 +25,8 @@
 #include "color.h"
 #include "logger.h"
 #include "file.h"
-#include "ui9.h"
 #include "app.h"
+#include "ui9.h"
 
 #include "timestamp.h"
 #include "teletype.h"
@@ -58,6 +59,33 @@ static const char * const * exec_argv = default_argv;
 static std::vector<const char*> exec_vec;
 
 
+/* cursors */
+
+static int cursor_names[2] = { GLFW_ARROW_CURSOR, GLFW_IBEAM_CURSOR };
+static GLFWcursor *cursor_objects[2];
+
+static void init_cursors()
+{
+    for (size_t i = 0; i < array_size(cursor_names); i++) {
+        cursor_objects[i] = glfwCreateStandardCursor(cursor_names[i]);
+    }
+}
+
+void app_set_cursor(app_cursor cursor)
+{
+    glfwSetCursor(window, cursor_objects[cursor]);
+}
+
+const char* app_get_clipboard()
+{
+    return glfwGetClipboardString(window);
+}
+
+void app_set_clipboard(const char* str)
+{
+    glfwSetClipboardString(window, str);
+}
+
 /* keyboard callback */
 
 static void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
@@ -87,21 +115,41 @@ static bool mouse_button_ui9(int button, int action, int mods, vec3 pos)
     }
     vec3 v = cg->get_canvas()->get_inverse_transform() * pos;
     ui9::MouseEvent evt{{ui9::mouse, q}, b, v};
-    return cg->get_root()->dispatch(&evt.header);
-}
-
-static void mouse_button(GLFWwindow* window, int button, int action, int mods)
-{
-    if (mouse_button_ui9(button, action, mods, vec3(mouse_pos, 1))) {
-        return;
-    }
+    bool handled = cg->get_root()->dispatch(&evt.header);
+    return (!handled) ? cg->mouse_event(&evt) : false;
 }
 
 static bool mouse_motion_ui9(vec3 pos)
 {
     vec3 v = cg->get_canvas()->get_inverse_transform() * pos;
     ui9::MouseEvent evt{{ui9::mouse, ui9::motion}, b, v};
-    return cg->get_root()->dispatch(&evt.header);
+    bool handled = false;
+    handled |= cg->get_root()->dispatch(&evt.header);
+    handled |= cg->mouse_event(&evt);
+    return handled;
+}
+
+static bool scroll_wheel_ui9(vec3 v)
+{
+    ui9::MouseEvent evt{{ui9::mouse, ui9::wheel}, b, v};
+    bool handled = false;
+    handled |= cg->get_root()->dispatch(&evt.header);
+    handled |= cg->mouse_event(&evt);
+    return handled;
+}
+
+static void scroll_wheel(GLFWwindow* window, double xoffset, double yoffset)
+{
+    if (scroll_wheel_ui9(vec3(xoffset, yoffset, 0.f))) {
+        tty->set_needs_update();
+    }
+}
+
+static void mouse_button(GLFWwindow* window, int button, int action, int mods)
+{
+    if (mouse_button_ui9(button, action, mods, vec3(mouse_pos, 1))) {
+        tty->set_needs_update();
+    }
 }
 
 static void cursor_position(GLFWwindow* window, double xpos, double ypos)
@@ -112,6 +160,11 @@ static void cursor_position(GLFWwindow* window, double xpos, double ypos)
         tty->set_needs_update();
         return;
     }
+}
+
+static void cursor_enter(GLFWwindow* window, int entered)
+{
+    app_set_cursor(entered ? app_cursor_ibeam : app_cursor_arrow);
 }
 
 static void reshape()
@@ -217,6 +270,8 @@ static void tty_app(int argc, char **argv)
     glfwSetScrollCallback(window, scroll);
     glfwSetKeyCallback(window, keyboard);
     glfwSetMouseButtonCallback(window, mouse_button);
+    glfwSetScrollCallback(window, scroll_wheel);
+    glfwSetCursorEnterCallback(window, cursor_enter);
     glfwSetCursorPosCallback(window, cursor_position);
     glfwSetFramebufferSizeCallback(window, framebuffer_size);
     glfwSetWindowFocusCallback(window, window_focus);
@@ -231,6 +286,7 @@ static void tty_app(int argc, char **argv)
     float scale = sqrtf((float)(framebuffer_width * framebuffer_height) /
                        (float)(window_width * window_height));
 
+    init_cursors();
     render->initialize();
 
     reshape();

@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cassert>
+#include <climits>
 
 #include <time.h>
 #include <poll.h>

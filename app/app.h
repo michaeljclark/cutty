@@ -57,6 +57,11 @@ typedef struct {
     GLuint tex;
 } texture_buffer;
 
+enum app_cursor { app_cursor_arrow, app_cursor_ibeam };
+void app_set_cursor(app_cursor cursor);
+const char* app_get_clipboard();
+void app_set_clipboard(const char* str);
+
 static std::vector<char> load_file(const char *filename)
 {
     std::vector<char> buf;

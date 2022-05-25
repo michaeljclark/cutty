@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <climits>
 
 #include <functional>
 #include <algorithm>
@@ -58,6 +59,10 @@ static std::vector<const char*> exec_vec;
 
 static OSMesaContext ctx;
 static uint8_t *buffer;
+
+void app_set_cursor(app_cursor cursor) {}
+const char* app_get_clipboard() { return ""; }
+void app_set_clipboard(const char* str) {}
 
 static void osmesa_init(int width, int height)
 {

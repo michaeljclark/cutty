@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <climits>
 
 #include <functional>
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include "color.h"
 #include "logger.h"
 #include "file.h"
+#include "app.h"
 #include "ui9.h"
 
 #include "timestamp.h"

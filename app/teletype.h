@@ -65,6 +65,24 @@ struct tty_line
     tty_timestamp tv;
 };
 
+struct tty_cell_ref { llong row; llong col; };
+struct tty_cell_span { tty_cell_ref start, end; };
+
+static const tty_cell_ref null_cell_ref = { INT_MIN, INT_MIN };
+
+inline bool operator< (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) < std::tie(b.row, b.col); }
+inline bool operator> (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) > std::tie(b.row, b.col); }
+inline bool operator<= (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) <= std::tie(b.row, b.col); }
+inline bool operator>= (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) >= std::tie(b.row, b.col); }
+inline bool operator== (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) == std::tie(b.row, b.col); }
+inline bool operator!= (const tty_cell_ref &a, const tty_cell_ref &b)
+{ return std::tie(a.row, a.col) != std::tie(b.row, b.col); }
+
 enum tty_char
 {
     tty_char_NUL = 0x00, // Null
@@ -181,6 +199,9 @@ struct tty_teletype
     virtual tty_line_voff visible_to_logical(llong vline) = 0;
     virtual tty_line_loff logical_to_visible(llong lline) = 0;
     virtual tty_line& get_line(llong lline) = 0;
+    virtual void set_selection(tty_cell_span selection) = 0;
+    virtual tty_cell_span get_selection() = 0;
+    virtual std::string get_selected_text() = 0;
     virtual llong total_rows() = 0;
     virtual llong total_lines() = 0;
     virtual llong visible_rows() = 0;

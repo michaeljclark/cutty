@@ -78,6 +78,7 @@ enum event_qualifier
     pressed = 1,
     released = 2,
     motion = 3,
+    wheel = 4,
 };
 
 enum button
@@ -85,7 +86,6 @@ enum button
     left_button = 1,
     center_button = 2,
     right_button = 3,
-    wheel = 4,
 };
 
 struct Event
@@ -755,8 +755,8 @@ struct Frame : Container
                  std::max(pref.y, get_default_size().y),
                  std::max(pref.z, get_default_size().z))
         };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Frame",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Frame",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1113,8 +1113,8 @@ struct Grid : Container
                  std::max(pref.y, get_default_size().y),
                  std::max(pref.z, get_default_size().z))
         };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Grid",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Grid",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1294,8 +1294,8 @@ struct Label : Visible
                  std::max(sz.y, get_default_size().y),
                  std::max(sz.z, get_default_size().z))
         };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Label",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Label",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1358,8 +1358,8 @@ struct Button : Visible
                  std::max(sz.y, get_default_size().y),
                  std::max(sz.z, get_default_size().z))
         };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Button",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Button",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1461,8 +1461,8 @@ struct Slider : Visible
                                std::max(preferred_size.y,min_size.y),
                                std::max(preferred_size.z,min_size.z) );
         Sizing s = { min_size, pref_size };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Slider",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Slider",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1622,8 +1622,8 @@ struct Switch : Visible
                                std::max(preferred_size.y,min_size.y),
                                std::max(preferred_size.z,min_size.z) );
         Sizing s = { min_size, pref_size };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Switch",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Switch",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1770,8 +1770,8 @@ struct Scroller : Visible
                                std::max(preferred_size.y,min_size.y),
                                std::max(preferred_size.z,min_size.z) );
         Sizing s = { min_size, pref_size };
-        Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Scroller",
-            s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
+        //Debug("%s minimum=(%f,%f), preferred=(%f,%f)\n", "Scroller",
+        //    s.minimum.x, s.minimum.y, s.preferred.x, s.preferred.y);
         return (last_sizing = s);
     }
 
@@ -1856,19 +1856,20 @@ struct Scroller : Visible
                         fabsf(gutter_dist.x) <= gutter_thickness/2;
         }
 
-        if (e->qualifier == pressed && !inside) {
-            inside = in_bar || in_gutter;
-        }
+        bool was_inside = inside;
 
-        bool handled = (e->qualifier == pressed && in_bar) ||
+        inside |=  (e->qualifier == pressed) && (in_bar || in_gutter);
+        inside &=  (e->qualifier != released);
+
+        bool handled = (e->qualifier == pressed && inside) ||
                        (e->qualifier == motion && inside) ||
-                       (e->qualifier == released && (in_bar || in_gutter));
+                       (e->qualifier == released && was_inside);
 
         if (handled) {
             set_value(std::min(std::max(new_value, 0.0f), 1.0f));
         }
 
-        inside &= (e->qualifier != released);
+        app_set_cursor(in_bar || in_gutter ? app_cursor_arrow : app_cursor_ibeam);
 
         return handled;
     }
