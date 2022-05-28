@@ -705,6 +705,13 @@ bool tty_cellgrid_impl::mouse_event(ui9::MouseEvent *me)
         vsel = { vsel.start, in_select ? vcell : vsel.end };
         if (me->header.qualifier == ui9::released) in_select = false;
         break;
+    case ui9::wheel:
+        if (me->pos.y < 0.f) {
+            new_scroll_row = std::max(scroll_row + (int)(me->pos.y) - 1, 0ll);
+        } else if (me->pos.y > 0.f) {
+            new_scroll_row = std::min(scroll_row + (int)(me->pos.y) + 1, vrange);
+        }
+        break;
     }
 
     tty_cell_span lsel = { vcell_to_lcell(vsel.start), vcell_to_lcell(vsel.end) };
