@@ -170,9 +170,9 @@ struct tty_teletype_impl : tty_teletype
     virtual ssize_t io();
     virtual ssize_t proc();
     virtual ssize_t write(const char *buf, size_t len);
-    virtual void special_ckm(int key, int mods);
-    virtual void special_key(int key, int mods);
-    virtual void keyboard(int key, int scancode, int action, int mods);
+    virtual bool special_ckm(int key, int mods);
+    virtual bool special_key(int key, int mods);
+    virtual bool keyboard(int key, int scancode, int action, int mods);
 
 protected:
     std::string args_str();
@@ -1687,9 +1687,9 @@ int tty_teletype_impl::keycode_to_char(int key, int mods)
     return 0;
 }
 
-void tty_teletype_impl::special_ckm(int key, int mods)
+bool tty_teletype_impl::special_ckm(int key, int mods)
 {
-    if (mods) return;
+    if (mods) return false;
     switch (key) {
     case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
     case GLFW_KEY_ENTER: send(tty_char_LF); break;
@@ -1717,12 +1717,14 @@ void tty_teletype_impl::special_ckm(int key, int mods)
     case GLFW_KEY_F10: write("\x1b[21~", 5); break;
     case GLFW_KEY_F11: write("\x1b[23~", 5); break;
     case GLFW_KEY_F12: write("\x1b[24~", 5); break;
+    default: return false;
     }
+    return true;
 }
 
-void tty_teletype_impl::special_key(int key, int mods)
+bool tty_teletype_impl::special_key(int key, int mods)
 {
-    if (mods) return;
+    if (mods) return false;
     switch (key) {
     case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
     case GLFW_KEY_ENTER: send(tty_char_LF); break;
@@ -1750,10 +1752,12 @@ void tty_teletype_impl::special_key(int key, int mods)
     case GLFW_KEY_F10: write("\x1b[21~", 5); break;
     case GLFW_KEY_F11: write("\x1b[23~", 5); break;
     case GLFW_KEY_F12: write("\x1b[24~", 5); break;
+    default: return false;
     }
+    return true;
 }
 
-void tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
+bool tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
 {
     // GLFW_MOD_ALT   = PC-Alt, MAC-Opt
     // GLFW_MOD_SUPER = PC-Win, MAC-Cmd
@@ -1763,16 +1767,21 @@ void tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
     case GLFW_REPEAT:
         if ((c = keycode_to_char(key, mods))) {
             send(c);
+            return true;
         } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_C) {
             app_set_clipboard(get_selected_text().c_str());
+            /* return false so that scroll is not modified for copies */
+            return false;
         } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_V) {
             const char *str = app_get_clipboard();
             write(str, strlen(str));
+            return true;
         } else if ((flags & tty_flag_DECCKM) > 0) {
-            special_ckm(key, mods);
+            return special_ckm(key, mods);
         } else {
-            special_key(key, mods);
+            return special_key(key, mods);
         }
         break;
     }
+    return false;
 }

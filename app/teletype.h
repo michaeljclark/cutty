@@ -216,7 +216,7 @@ struct tty_teletype
     virtual ssize_t io() = 0;
     virtual ssize_t proc() = 0;
     virtual ssize_t write(const char *buf, size_t len) = 0;
-    virtual void keyboard(int key, int scancode, int action, int mods) = 0;
+    virtual bool keyboard(int key, int scancode, int action, int mods) = 0;
 };
 
 tty_teletype* tty_new();

@@ -90,7 +90,12 @@ void app_set_clipboard(const char* str)
 
 static void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    tty->keyboard(key, scancode, action, mods);
+    if (tty->keyboard(key, scancode, action, mods)) {
+        if (cg->get_scroll_row() != 0) {
+            cg->set_scroll_row(0);
+            tty->set_needs_update();
+        }
+    }
 }
 
 /* mouse callbacks */

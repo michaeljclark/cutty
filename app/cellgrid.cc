@@ -126,6 +126,9 @@ struct tty_cellgrid_impl : tty_cellgrid
     virtual tty_style get_style();
     virtual void set_style(tty_style s);
     virtual tty_winsize get_winsize();
+    virtual llong get_scroll_row_limit();
+    virtual llong get_scroll_row();
+    virtual void set_scroll_row(llong row);
     virtual tty_font_metric get_font_metric();
     virtual font_face* get_font_face(tty_cellgrid_face face);
 
@@ -661,6 +664,23 @@ void tty_cellgrid_impl::draw(draw_list &batch)
 }
 
 static GLFWcursor *ibeam_cursor = NULL;
+
+llong tty_cellgrid_impl::get_scroll_row_limit()
+{
+    llong visible_rows = tty->visible_rows();
+    llong total_rows = tty->total_rows();
+    return total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
+}
+
+llong tty_cellgrid_impl::get_scroll_row()
+{
+    return scroll_row;
+}
+
+void tty_cellgrid_impl::set_scroll_row(llong row)
+{
+     scroll_row = std::max(std::min(row, get_scroll_row_limit()), 0ll);
+}
 
 bool tty_cellgrid_impl::mouse_event(ui9::MouseEvent *me)
 {
