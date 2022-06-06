@@ -107,7 +107,6 @@ struct tty_cellgrid_impl : tty_cellgrid
     static const uint timestamp_bgcolor = 0xffe8e8e8;
     static const tty_cellgrid_face timestamp_face = tty_cellgrid_face_condensed_regular;
     static const tty_timestamp_fmt timestamp_format = tty_timestamp_fmt_iso_datetime_us;
-    static const uint selection_color = 0xffffe8d8;
 
     tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty, bool test_mode);
 
@@ -154,12 +153,21 @@ tty_cellgrid_impl::tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty
     : tty(tty), manager(manager), root(manager), canvas(manager)
 {
     if (test_mode) {
-        style = { 1200.f, 800.f, 0.f, 25.f, 1.f, 0xffffffff, 0x40000000 };
+        style = {
+            1200.f, 800.f, 0.f, 25.f, 1.f,
+            0xffffffff, 0x40000000, 0xffd8d8d8, 0xffe8e8e8
+        };
     } else {
         #if defined __APPLE__
-        style = { 630.f, 440.f, 15.f, 12.5f, 1.f, 0xffe8e8e8, 0x40000000 };
+        style = {
+            630.f, 440.f, 15.f, 12.5f, 1.f,
+            0xffe8e8e8, 0x40000000, 0xffd8d8d8, 0xffe8e8e8
+        };
         #else
-        style = { 1230.f, 850.f, 15.f, 25.0f, 1.f, 0xffe8e8e8, 0x40000000 };
+        style = {
+            1230.f, 850.f, 15.f, 25.0f, 1.f,
+            0xffe8e8e8, 0x40000000, 0xffd8d8d8, 0xffe8e8e8
+        };
         #endif
     }
     text_lang = "en";
@@ -508,7 +516,11 @@ void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, tty_winsize ws,
         [&] (auto line, auto k, auto l, auto o, auto i) {},
         [&] (auto cell, auto k, auto l, auto o, auto i) {
             tty_cell_ref cellref = { (llong)k, (llong)i };
-            uint bg = is_selected(cellref) ? selection_color : cell_col(cell).bg;
+            uint bg = is_selected(cellref) ?
+                has_flag(tty_cellgrid_focused) ?
+                style.select_focus_color :
+                style.select_nofocus_color :
+                cell_col(cell).bg;
             render_block(fm, l, i-o, 1, 1, bg);
         },
         [&] (auto line, auto k, auto l, auto o, auto i) {}

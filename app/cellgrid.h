@@ -27,8 +27,11 @@ struct tty_style
     float rscale;
     uint background_color;
     uint cursor_color;
+    uint select_focus_color;
+    uint select_nofocus_color;
     template <typename... Args> constexpr auto tuple() {
-        return std::tie(width, height, margin, font_size, rscale, background_color, cursor_color);
+        return std::tie(width, height, margin, font_size, rscale,
+            background_color, cursor_color, select_focus_color, select_nofocus_color);
     }
 };
 
