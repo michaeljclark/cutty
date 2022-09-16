@@ -169,6 +169,8 @@ void tty_render_opengl::update()
 
     if (!cg->get_teletype()->get_needs_update()) return;
 
+    cg->update_scroll();
+
     auto now = high_resolution_clock::now();
     tn = duration_cast<nanoseconds>(now.time_since_epoch()).count();
     if (tl != 0) circular_buffer_add(&frame_times, tn - tl);

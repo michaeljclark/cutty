@@ -89,8 +89,6 @@ struct tty_cellgrid_impl : tty_cellgrid
     font_face *mono1_condensed_regular;
     font_face *mono1_condensed_bold;
     int flags;
-    llong scroll_row;
-    llong scroll_col;
     ui9::Root root;
     MVGCanvas canvas;
     ui9::Scroller *vscroll;
@@ -125,9 +123,6 @@ struct tty_cellgrid_impl : tty_cellgrid
     virtual tty_style get_style();
     virtual void set_style(tty_style s);
     virtual tty_winsize get_winsize();
-    virtual llong get_scroll_row_limit();
-    virtual llong get_scroll_row();
-    virtual void set_scroll_row(llong row);
     virtual tty_font_metric get_font_metric();
     virtual font_face* get_font_face(tty_cellgrid_face face);
 
@@ -135,6 +130,7 @@ struct tty_cellgrid_impl : tty_cellgrid
     virtual tty_teletype* get_teletype();
     virtual MVGCanvas* get_canvas();
     virtual ui9::Root* get_root();
+    virtual void update_scroll();
     virtual bool mouse_event(ui9::MouseEvent *e);
 
     void scroll_event(ui9::axis_2D axis, float val);
@@ -143,9 +139,9 @@ struct tty_cellgrid_impl : tty_cellgrid
     tty_cell_ref vcell_to_lcell(tty_cellgrid_ref cell);
     tty_cell cell_col(tty_cell &cell);
     void draw_loop(int rows, int cols,
-        std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
-        std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
-        std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb);
+        std::function<void(tty_line&,size_t,size_t,size_t,size_t)> linepre_cb,
+        std::function<void(tty_cell&,size_t,size_t,size_t,size_t)> cell_cb,
+        std::function<void(tty_line&,size_t,size_t,size_t,size_t)> linepost_cb);
 };
 
 
@@ -160,7 +156,9 @@ tty_cellgrid_impl::tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty
     } else {
         #if defined __APPLE__
         style = {
-            630.f, 440.f, 15.f, 12.5f, 1.f,
+            //630.f, 440.f, 15.f, 12.5f, 1.f,
+            800.f, 440.f, 15.f, 12.5f, 1.f,
+            //1020.f, 440.f, 15.f, 12.5f, 1.f,
             0xffe8e8e8, 0x40000000, 0xffd8d8d8, 0xffe8e8e8
         };
         #else
@@ -171,9 +169,7 @@ tty_cellgrid_impl::tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty
         #endif
     }
     text_lang = "en";
-    scroll_row = 0;
-    scroll_col = 0;
-    flags = tty_cellgrid_scrollbars | tty_cellgrid_background | tty_cellgrid_focused;
+    flags = tty_cellgrid_background | tty_cellgrid_focused;
 
     vscroll = new ui9::Scroller();
     vscroll->set_orientation(ui9::axis_2D::vertical);
@@ -300,12 +296,12 @@ font_face* tty_cellgrid_impl::cell_font(tty_cell &cell)
 
 tty_cell_ref tty_cellgrid_impl::vcell_to_lcell(tty_cellgrid_ref vcell)
 {
-    llong row = floorf(vcell.row), col = floorf(vcell.col);
-    tty_line_voff voff = tty->visible_to_logical(row);
-    llong lline = voff.lline, loff = voff.offset;
-    tty_line line = tty->get_line(lline);
-    llong lcol = std::min(loff + col, (llong)line.cells.size());
-    return { lline, lcol };
+    llong row = floorf(vcell.row), vcol = floorf(vcell.col);
+    llong visible_rows = tty->visible_rows(), total_rows = tty->total_rows();
+    llong offset = total_rows < visible_rows ? visible_rows - total_rows : 0;
+    tty_log_loc loff = tty->visible_to_logical(row + offset);
+    tty_line line = tty->get_line(loff.lline);
+    return { loff.lline, std::min(loff.loff + vcol, (llong)line.cells.size()) };
 }
 
 tty_cell tty_cellgrid_impl::cell_col(tty_cell &cell)
@@ -327,18 +323,19 @@ tty_cell tty_cellgrid_impl::cell_col(tty_cell &cell)
 }
 
 void tty_cellgrid_impl::draw_loop(int rows, int cols,
-    std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepre_cb,
-    std::function<void(tty_cell &cell,size_t k,size_t l,size_t o,size_t i)> cell_cb,
-    std::function<void(tty_line &line,size_t k,size_t l,size_t o,size_t i)> linepost_cb)
+    std::function<void(tty_line&,size_t,size_t,size_t,size_t)> linepre_cb,
+    std::function<void(tty_cell&,size_t,size_t,size_t,size_t)> cell_cb,
+    std::function<void(tty_line&,size_t,size_t,size_t,size_t)> linepost_cb)
 {
     llong total_rows = tty->total_rows();
-
-    for (llong j = total_rows - 1 - scroll_row, l = 0; l < rows && j >= 0; j--, l++)
+    llong scroll_row = tty->scroll_row();
+    llong offset = total_rows < rows ? rows - total_rows : 0;
+    for (llong j = total_rows - 1 - scroll_row + offset, l = 0; l < rows; j--, l++)
     {
-        if (j >= total_rows) continue;
+        if (j < 0 || j >= total_rows) continue;
 
-        tty_line_voff voff = tty->visible_to_logical(j);
-        size_t k = voff.lline, o = voff.offset;
+        tty_log_loc loff = tty->visible_to_logical(j);
+        size_t k = loff.lline, o = loff.loff;
         tty_line line = tty->get_line(k);
         size_t limit = std::min(o + cols, line.cells.size());
 
@@ -500,6 +497,8 @@ void tty_cellgrid_impl::draw_cellgrid(draw_list &batch, tty_winsize ws,
 
     tty_cell_span selected = tty->get_selection();
 
+    // todo: add offset adjustment
+
     auto is_selected = [&](tty_cell_ref cellref) -> bool
     {
         if (selected.start == null_cell_ref && selected.end == null_cell_ref) {
@@ -577,7 +576,7 @@ void tty_cellgrid_impl::draw_cursor(draw_list &batch, tty_winsize ws,
 {
     int rows = ws.vis_rows;
     int fit_cols = (int)floorf(std::max(0.f, field_width) / fm.advance);
-    int clrow = tty->get_cur_row(), clcol = tty->get_cur_col();
+    int lline = tty->cursor_line(), loff = tty->cursor_offset();
 
     auto render_block = [&](tty_font_metric &fm, int row, int col, int h, int w, uint c)
     {
@@ -599,11 +598,11 @@ void tty_cellgrid_impl::draw_cursor(draw_list &batch, tty_winsize ws,
     /* render cursor */
     draw_loop(rows, fit_cols,
         [&] (auto line, auto k, auto l, auto o, auto i) {
-            if (clrow == k && clcol >= o && clcol < o + fit_cols) {
+            if (lline == k && loff >= o && loff < o + fit_cols) {
                 if (has_flag(tty_cellgrid_focused)) {
-                    render_block(fm, l, clcol - o, 1, 1, style.cursor_color);
+                    render_block(fm, l, loff - o, 1, 1, style.cursor_color);
                 } else {
-                    render_rect(fm, l, clcol - o, 1, 1, style.cursor_color);
+                    render_rect(fm, l, loff - o, 1, 1, style.cursor_color);
                 }
             }
         },
@@ -677,23 +676,6 @@ void tty_cellgrid_impl::draw(draw_list &batch)
 
 static GLFWcursor *ibeam_cursor = NULL;
 
-llong tty_cellgrid_impl::get_scroll_row_limit()
-{
-    llong visible_rows = tty->visible_rows();
-    llong total_rows = tty->total_rows();
-    return total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
-}
-
-llong tty_cellgrid_impl::get_scroll_row()
-{
-    return scroll_row;
-}
-
-void tty_cellgrid_impl::set_scroll_row(llong row)
-{
-     scroll_row = std::max(std::min(row, get_scroll_row_limit()), 0ll);
-}
-
 bool tty_cellgrid_impl::mouse_event(ui9::MouseEvent *me)
 {
     float ox = style.margin;
@@ -712,7 +694,9 @@ bool tty_cellgrid_impl::mouse_event(ui9::MouseEvent *me)
 
     llong visible_rows = tty->visible_rows();
     llong total_rows = tty->total_rows();
-    llong vrange = total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
+    llong scroll_row = tty->scroll_row();
+    llong scroll_col = tty->scroll_col();
+    llong vrange = tty->scroll_row_limit();
 
     vec2 v = { me->pos.x - ox, oy - me->pos.y };
     vec2 p = { v.x / fm.advance, v.y / fm.leading };
@@ -758,28 +742,29 @@ bool tty_cellgrid_impl::mouse_event(ui9::MouseEvent *me)
         if (lsel.start < lsel.end) lsel = { null_cell_ref, null_cell_ref };
     }
 
-    if (new_scroll_row != scroll_row) {
-        scroll_row = new_scroll_row;
-        vscroll->set_value((float)new_scroll_row / (float)vrange);
-    }
-
+    tty->set_scroll_row(new_scroll_row);
     tty->set_selection(lsel);
 
     return true;
 }
 
+void tty_cellgrid_impl::update_scroll()
+{
+    float vscroll_val = (float)tty->scroll_row() / tty->scroll_row_limit();
+    float hscroll_val = (float)tty->scroll_col() / tty->scroll_col_limit();
+    vscroll->set_value(vscroll_val);
+    hscroll->set_value(hscroll_val);
+}
+
 void tty_cellgrid_impl::scroll_event(ui9::axis_2D axis, float val)
 {
-    llong visible_rows = tty->visible_rows();
-    llong total_rows = tty->total_rows();
-    llong vrange = total_rows - visible_rows > 0 ? total_rows - visible_rows : 0;
-
+    val = std::min(1.0f, std::max(0.0f, val));
     switch (axis) {
     case ui9::axis_2D::vertical:
-        scroll_row = (size_t)(val * (float)vrange);
+        tty->set_scroll_row((size_t)(val * (float)tty->scroll_row_limit()));
         break;
     case ui9::axis_2D::horizontal:
-        //scroll_col = (size_t)(val * (float)hrange);
+        tty->set_scroll_col((size_t)(val * (float)tty->scroll_col_limit()));
         break;
     }
 }

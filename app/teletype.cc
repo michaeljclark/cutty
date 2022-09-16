@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include <cstdlib>
 #include <cerrno>
 #include <cassert>
@@ -19,6 +20,7 @@
 static int io_buffer_size = 65536;
 static int io_poll_timeout = 1;
 static int line_cache_size = 128;
+static bool debug_io = false;
 
 static const char* ctrl_code[32] = {
     "NUL",
@@ -103,27 +105,65 @@ static std::string control_string(std::string s)
     return out;
 }
 
-struct tty_private_mode_rec
+static void dump_buffer(const char *buf, size_t len, std::function<void(const char*)> emit)
 {
-    uint code;
-    uint flag;
-    const char *name;
-};
+    enum char_class { c_none, c_ctrl, c_ascii, c_hex };
 
-static tty_private_mode_rec dec_flags[] = {
-    {    1, tty_flag_DECCKM,     "app_cursor_keys"        },
-    {    7, tty_flag_DECAWM,     "auto_wrap"              },
-    {   12, tty_flag_ATTBC,      "blinking_cursor"        },
-    {   25, tty_flag_DECTCEM,    "cursor_enable"          },
-    { 1034, tty_flag_XT8BM,      "eight_bit_mode"         },
-    { 1047, tty_flag_XTAS,       "alt_screen"             },
-    { 1048, tty_flag_XTSC,       "save_cursor"            },
-    { 1049, tty_flag_XTAS |
-            tty_flag_XTSC,       "save_cursor_alt_screen" },
-    { 2004, tty_flag_XTBP,       "bracketed_paste"        },
-    { 7000, tty_flag_DECBKM,     "backarrow_sends_delete" },
-    { 7001, tty_flag_DECAKM,     "alt_keypad_mode"        }
-};
+    auto classify = [] (int c) -> char_class {
+        if (c < 32) return c_ctrl;
+        else if (c < 127) return c_ascii;
+        else return c_hex;
+    };
+    auto code = [] (int c) -> std::string {
+        if (c < 32) return std::string(ctrl_code[c]);
+        else return std::string("?");
+    };
+    auto text = [] (int c) -> std::string {
+        if (c == '"') return std::string("\\\"");
+        else return std::string(1, c);
+    };
+    auto hex = [](int c) -> std::string {
+        char hex[8];
+        snprintf(hex, sizeof(hex), "#%02x", c & 0xff);
+        return hex;
+    };
+
+    std::string out;
+    int l = 0, c;
+    char_class lc = c_none, cc;
+
+    for (size_t i = 0; i < len; i++) {
+        c = (unsigned char)buf[i];
+        cc = classify(c);
+        if (((cc == c_ascii && cc == lc) && out.size() > 62) ||
+            ((cc != c_ascii || cc != lc) && out.size() > 58)) {
+            if (lc == c_ascii) out.append("\"");
+            emit(out.c_str());
+            out.clear();
+        }
+        if (lc == c_ascii && cc != c_ascii) {
+            out.append("\"");
+        }
+        if (out.size() != 0 && (cc != c_ascii || lc != c_ascii)) {
+            out.append(" ");
+        }
+        if (cc == c_ascii && (out.size() == 0 || lc != c_ascii)) {
+            out.append("\"");
+        }
+        switch (cc) {
+        case c_none: break;
+        case c_ctrl: out.append(code(c)); break;
+        case c_ascii: out.append(text(c)); break;
+        case c_hex: out.append(hex(c)); break;
+        }
+        l = c;
+        lc = cc;
+    }
+    if (out.size() > 0) {
+        if (lc == c_ascii) out.append("\"");
+        emit(out.c_str());
+    }
+}
 
 typedef struct { ushort d[3]; } tty_int48;
 
@@ -138,6 +178,13 @@ static inline tty_int48 tty_int48_set(llong v)
     tty_int48 x = { (ushort)v, (ushort)(v >> 16), (ushort)(v >> 32) };
     return x;
 }
+
+struct tty_private_mode_rec
+{
+    uint code;
+    uint flag;
+    const char *name;
+};
 
 struct tty_packed_line
 {
@@ -155,8 +202,16 @@ struct tty_cached_line
     tty_line ldata;
 };
 
-struct tty_packed_voff { tty_int48 lline, offset; };
-struct tty_packed_loff { tty_int48 vline, count; };
+struct tty_packed_log_loc { tty_int48 lline, loff; };
+struct tty_packed_vis_loc { tty_int48 vrow, count; };
+
+enum coord_type { coord_type_none, coord_type_rel, coord_type_abs };
+
+struct tty_coord { coord_type type; llong val; };
+
+static tty_coord coord_none() { return tty_coord { coord_type_none, 0 }; }
+static tty_coord coord_rel(llong val) { return tty_coord { coord_type_rel, val }; }
+static tty_coord coord_abs(llong val) { return tty_coord { coord_type_abs, val }; }
 
 struct tty_line_store
 {
@@ -164,8 +219,8 @@ struct tty_line_store
     std::vector<char> text;
     std::vector<tty_packed_line> lines;
     std::vector<tty_cached_line> cache;
-    std::vector<tty_packed_voff> voffsets;
-    std::vector<tty_packed_loff> loffsets;
+    std::vector<tty_packed_log_loc> voffsets;
+    std::vector<tty_packed_vis_loc> loffsets;
 
     tty_packed_line pack(tty_line &uline);
     tty_line unpack(tty_packed_line &pline);
@@ -173,6 +228,8 @@ struct tty_line_store
     llong count_cells(tty_packed_line &pline);
     llong count_cells(llong lline);
     void clear_line(llong lline);
+    void erase_line(llong lline, llong start, llong end, llong cols, tty_cell tmpl);
+    void clear_all();
     void invalidate_cache();
     void dump_stats();
 
@@ -201,20 +258,30 @@ struct tty_teletype_impl : tty_teletype
     ssize_t out_end;
 
     tty_timestamp tv;
-
     tty_cell tmpl;
     tty_line_store hist;
     tty_line empty_line;
     tty_cell_span sel;
     tty_winsize ws;
-    llong cur_row;
-    llong cur_col;
-    llong min_row;
+    llong cur_line;
+    llong cur_offset;
+    bool cur_overflow;
+    llong sav_line;
+    llong sav_offset;
+    llong sav_overflow;
+    llong sav_row;
+    llong sav_col;
+    llong min_line;
+    llong max_cols;
     llong top_marg;
     llong bot_marg;
+    llong scr_row;
+    llong scr_col;
 
     tty_teletype_impl();
     virtual ~tty_teletype_impl() = default;
+
+    virtual void log(logger::L level, const char *fmt, ...);
 
     virtual void close();
     virtual bool get_needs_update();
@@ -222,19 +289,33 @@ struct tty_teletype_impl : tty_teletype
     virtual bool get_needs_capture();
     virtual void set_needs_capture();
     virtual void update_offsets();
-    virtual tty_line_voff visible_to_logical(llong vline);
-    virtual tty_line_loff logical_to_visible(llong lline);
+    virtual tty_log_loc visible_to_logical(llong vrow);
+    virtual tty_vis_loc logical_to_visible(llong lline);
     virtual tty_line& get_line(llong lline);
     virtual void set_selection(tty_cell_span sel);
     virtual tty_cell_span get_selection();
     virtual std::string get_selected_text();
     virtual llong total_rows();
-    virtual llong total_lines();
+    virtual llong total_cols();
     virtual llong visible_rows();
-    virtual llong visible_lines();
-    virtual llong get_cur_row();
-    virtual llong get_cur_col();
-    virtual bool has_flag(uint check);
+    virtual llong visible_cols();
+    virtual llong top_row();
+    virtual llong scroll_top();
+    virtual llong scroll_bottom();
+    virtual bool scroll_top_enabled();
+    virtual bool scroll_bottom_enabled();
+    virtual llong scroll_row();
+    virtual llong scroll_row_limit();
+    virtual llong scroll_col();
+    virtual llong scroll_col_limit();
+    virtual void set_scroll_row(llong row);
+    virtual void set_scroll_col(llong col);
+    virtual llong cursor_row();
+    virtual llong cursor_col();
+    virtual llong cursor_line();
+    virtual llong cursor_offset();
+    virtual bool has_flag(uint flag);
+    virtual void set_flag(uint flag, bool value);
     virtual tty_winsize get_winsize();
     virtual void set_winsize(tty_winsize dim);
     virtual void set_fd(int fd);
@@ -248,36 +329,55 @@ struct tty_teletype_impl : tty_teletype
 protected:
     std::string args_str();
     int opt_arg(int arg, int opt);
+
     void send(uint c);
-    void xtwinops();
-    void set_row(llong row);
-    void set_col(llong col);
-    void move_abs(llong row, llong col);
-    void move_rel(llong row, llong col);
-    void scroll_region(llong line0, llong line1);
+    void move(tty_coord row, tty_coord col);
     void reset_style();
     void erase_screen(uint arg);
     void erase_line(uint arg);
     void insert_lines(uint arg);
     void delete_lines(uint arg);
     void delete_chars(uint arg);
+
+    void handle_scroll();
+    void handle_scroll_region(llong line0, llong line1);
+    void handle_save_cursor();
+    void handle_restore_cursor();
     void handle_bell();
     void handle_backspace();
     void handle_horizontal_tab();
     void handle_line_feed();
     void handle_carriage_return();
     void handle_bare(uint c);
-    void handle_control_character(uint c);
+    void handle_control(uint c);
     void handle_charset(uint cmd, uint set);
-    void osc(uint c);
-    void osc_string(uint c);
-    void csi_private_mode(uint code, uint set);
-    void csi_dec(uint c);
-    void csi_dec2(uint c);
-    void csi_dec3(uint c);
-    void csi_dsr();
-    void csi(uint c);
+    void handle_keypad_mode(bool set);
+    void handle_window_manager();
+    void handle_osc(uint c);
+    void handle_osc_string(uint c);
+    void handle_csi_private_mode(uint code, uint set);
+    void handle_csi_dec(uint c);
+    void handle_csi_dec2(uint c);
+    void handle_csi_dec3(uint c);
+    void handle_csi_dsr();
+    void handle_csi(uint c);
+
     void absorb(uint c);
+};
+
+static tty_private_mode_rec dec_flags[] = {
+    {    1, tty_flag_DECCKM,     "app_cursor_keys"        },
+    {    7, tty_flag_DECAWM,     "auto_wrap"              },
+    {   12, tty_flag_ATTBC,      "blinking_cursor"        },
+    {   25, tty_flag_DECTCEM,    "cursor_enable"          },
+    { 1034, tty_flag_XT8BM,      "eight_bit_mode"         },
+    { 1047, tty_flag_XTAS,       "alt_screen"             },
+    { 1048, tty_flag_XTSC,       "save_cursor"            },
+    { 1049, tty_flag_XTAS |
+            tty_flag_XTSC,       "save_cursor_alt_screen" },
+    { 2004, tty_flag_XTBP,       "bracketed_paste"        },
+    { 7000, tty_flag_DECBKM,     "backarrow_sends_delete" },
+    { 7001, tty_flag_DECAKM,     "alt_keypad_mode"        }
 };
 
 tty_teletype_impl::tty_teletype_impl() :
@@ -302,11 +402,17 @@ tty_teletype_impl::tty_teletype_impl() :
     empty_line{},
     sel{null_cell_ref, null_cell_ref},
     ws{0,0,0,0},
-    cur_row(0),
-    cur_col(0),
-    min_row(0),
+    cur_line(0),
+    cur_offset(0),
+    cur_overflow(0),
+    sav_row(0),
+    sav_col(0),
+    min_line(0),
+    max_cols(0),
     top_marg(0),
-    bot_marg(0)
+    bot_marg(0),
+    scr_row(0),
+    scr_col(0)
 {
     in_buf.resize(io_buffer_size);
     out_buf.resize(io_buffer_size);
@@ -346,6 +452,32 @@ void tty_teletype_impl::set_needs_capture()
 {
     needs_capture |= true;
 }
+
+static llong trace_counter;
+static std::vector<char> trace_charseq;
+
+void tty_teletype_impl::log(logger::L level, const char *fmt, ...)
+{
+    char prefix[64];
+    llong row = cursor_row() - top_row() + 1, col = cursor_col() + 1;
+    snprintf(prefix, sizeof(prefix), "%s: [%09llu] (%-2llu,%-2llu) ",
+        logger::level_names[level], trace_counter, row, col);
+
+    if (trace_charseq.size() > 0) {
+        dump_buffer(&trace_charseq[0], trace_charseq.size(),
+            [&](const char* msg) { logger::log(level, "charseq: %s\n", msg); });
+        trace_charseq.clear();
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    logger::output(prefix, fmt, ap);
+    va_end(ap);
+}
+
+#undef Trace
+#define Trace(fmt, ...) \
+if (logger::L::Ltrace >= logger::level) log(logger::L::Ltrace, fmt, ## __VA_ARGS__);
 
 static std::string char_str(uint c)
 {
@@ -478,6 +610,7 @@ tty_line& tty_line_store::get_line(llong lline, bool edit)
         }
         cache[cl].ldata = unpack(lines[lline]);
         cache[cl].lline = tty_int48_set(lline);
+        cache[cl].dirty = false;
     }
 
     cache[cl].dirty |= edit;
@@ -521,14 +654,66 @@ void tty_line_store::clear_line(llong lline)
     lines[lline].cell_count = tty_int48_set(0);
 }
 
+void tty_line_store::erase_line(llong lline, llong start, llong end, llong cols, tty_cell tmpl)
+{
+    /* erase line from start to end where end is not the right hand column */
+    if (end < count_cells(lline) && (end % cols) != 0)
+    {
+        tty_line &line = get_line(lline, true);
+        tty_cell cell = tmpl;
+        cell.codepoint = ' ';
+        for (size_t col = start; col < end; col++) {
+            line.cells[col] = cell;
+        }
+    }
+    /* erase line from start to end where end is the right hand column
+     * and text beyond end needs to be split onto another line */
+    else if (end < count_cells(lline) && (end % cols) == 0)
+    {
+        bool blank_line = start != 0 && start % cols == 0;
+        invalidate_cache();
+        lines.insert(lines.begin() + lline + 1, tty_packed_line{});
+        if (blank_line) {
+            lines.insert(lines.begin() + lline + 1, tty_packed_line{});
+        }
+        tty_line &curr_line = get_line(lline, true);
+        tty_line &next_line = get_line(lline + 1 + blank_line, true);
+        size_t copy_start = size_t(end);
+        size_t copy_end = curr_line.cells.size();
+        size_t copy_count = copy_end - copy_start;
+        next_line.cells.resize(copy_count);
+        for (size_t i = 0; i < copy_count; i++) {
+            next_line.cells[i] = curr_line.cells[copy_start + i];
+        }
+        curr_line.cells.resize(start);
+    }
+    /* erase line from start to end where end is the right hand column */
+    else if (start < count_cells(lline) && (end % cols) == 0)
+    {
+        tty_line &line = get_line(lline, true);
+        line.cells.resize(start);
+    }
+}
+
+void tty_line_store::clear_all()
+{
+    cache.clear();
+    for (size_t i = 0; i < line_cache_size; i++) {
+        cache.push_back(tty_cached_line{ tty_int48_set(-1), false, tty_line{} });
+    }
+    lines.clear();
+    lines.push_back(tty_packed_line{});
+}
+
 void tty_line_store::invalidate_cache()
 {
     for (llong cl = 0; cl < line_cache_size; cl++) {
         llong olline = tty_int48_get(cache[cl].lline);
         if (olline >= 0 && cache[cl].dirty) {
             lines[olline] = pack(cache[cl].ldata);
-            cache[cl].lline = tty_int48_set(-1);
+            cache[cl].dirty = false;
         }
+        cache[cl].lline = tty_int48_set(-1);
     }
 }
 
@@ -546,22 +731,23 @@ void tty_line_store::dump_stats()
         cache_cells, sizeof(tty_cell),
         cache_cells * sizeof(tty_cell));
     Info("tty_line_store.voffsets    = %9zu x %2zu (%9zu)\n",
-        voffsets.size(), sizeof(tty_packed_voff),
-        voffsets.size() * sizeof(tty_packed_voff));
+        voffsets.size(), sizeof(tty_packed_log_loc),
+        voffsets.size() * sizeof(tty_packed_log_loc));
     Info("tty_line_store.loffsets    = %9zu x %2zu (%9zu)\n",
-        loffsets.size(), sizeof(tty_packed_loff),
-        loffsets.size() * sizeof(tty_packed_loff));
+        loffsets.size(), sizeof(tty_packed_vis_loc),
+        loffsets.size() * sizeof(tty_packed_vis_loc));
     Info("tty_line_store.pack.lines  = %9zu x %2zu (%9zu)\n",
         lines.size(), sizeof(tty_packed_line),
         lines.size() * sizeof(tty_packed_line));
     Info("tty_line_store.pack.cells  = %9zu x %2zu (%9zu)\n",
-        cells.size(), sizeof(tty_cell), cells.size() * sizeof(tty_cell));
+        cells.size(), sizeof(tty_cell),
+        cells.size() * sizeof(tty_cell));
     Info("tty_line_store.pack.text   = %9zu x %2zu (%9zu)\n",
         text.size(), sizeof(char), text.size() * sizeof(char));
     size_t total = cache.size() * sizeof(tty_cached_line)
                  + cache_cells * sizeof(tty_cell)
-                 + voffsets.size() * sizeof(tty_packed_voff)
-                 + loffsets.size() * sizeof(tty_packed_loff)
+                 + voffsets.size() * sizeof(tty_packed_log_loc)
+                 + loffsets.size() * sizeof(tty_packed_vis_loc)
                  + lines.size() * sizeof(tty_packed_line)
                  + cells.size() * sizeof(tty_cell)
                  + text.size() * sizeof(char);
@@ -578,20 +764,24 @@ void tty_teletype_impl::update_offsets()
     if (!wrap_enabled) {
         hist.voffsets.clear();
         hist.loffsets.clear();
-        return;
+
+        max_cols = 0;
+        for (llong k = 0; k < hist.lines.size(); k++) {
+            max_cols = std::max(max_cols, hist.count_cells(k));
+        }
     }
 
-    /* recompute line offsets incrementally from min_row */
-    if (min_row == 0) {
+    /* recompute line offsets incrementally from min_line */
+    if (min_line == 0) {
         vlstart = 0;
     } else {
-        auto &loff = hist.loffsets[min_row - 1];
-        vlstart = tty_int48_get(loff.vline) + tty_int48_get(loff.count);
+        auto &loff = hist.loffsets[min_line - 1];
+        vlstart = tty_int48_get(loff.vrow) + tty_int48_get(loff.count);
     }
 
     /* count lines with wrap incrementally from min row */
     vl = vlstart;
-    for (llong k = min_row; k < hist.lines.size(); k++) {
+    for (llong k = min_line; k < hist.lines.size(); k++) {
         llong cell_count = hist.count_cells(k);
         llong wrap_count = cell_count == 0 ? 1
             : cols == 0 ? 1 : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
@@ -602,7 +792,7 @@ void tty_teletype_impl::update_offsets()
     hist.voffsets.resize(vl);
     hist.loffsets.resize(hist.lines.size());
     vl = vlstart;
-    for (llong k = min_row; k < hist.lines.size(); k++) {
+    for (llong k = min_line; k < hist.lines.size(); k++) {
         llong cell_count = hist.count_cells(k);
         llong wrap_count = cell_count == 0 ? 1
             : cols == 0 ? 1 : wrap_enabled ? (cell_count + cols - 1) / cols : 1;
@@ -612,51 +802,54 @@ void tty_teletype_impl::update_offsets()
         }
     }
 
-    /* set min_row to cur_row */
-    min_row = cur_row;
+    /* set min_line to cur_line */
+    min_line = cur_line;
 }
 
-tty_line_voff tty_teletype_impl::visible_to_logical(llong vline)
+tty_log_loc tty_teletype_impl::visible_to_logical(llong vrow)
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
-        if (vline < 0) {
-            return tty_line_voff{ -1, 0 };
+        if (vrow < 0) {
+            return tty_log_loc{ -1, 0 };
         }
-        else if (vline < hist.voffsets.size()) {
-            return tty_line_voff{
-                tty_int48_get(hist.voffsets[vline].lline),
-                tty_int48_get(hist.voffsets[vline].offset)
+        else if (vrow < (llong)hist.voffsets.size()) {
+            return tty_log_loc{
+                tty_int48_get(hist.voffsets[vrow].lline),
+                tty_int48_get(hist.voffsets[vrow].loff)
             };
         }
         else {
-            return tty_line_voff{ (llong)hist.loffsets.size(), 0 };
+            llong size = (llong)hist.loffsets.size();
+            llong delta = vrow - (llong)hist.voffsets.size();
+            return tty_log_loc{ size + delta, 0 };
         }
     } else {
-        return tty_line_voff{ vline, 0 };
+        return tty_log_loc{ vrow, 0 };
     }
 }
 
-tty_line_loff tty_teletype_impl::logical_to_visible(llong lline)
+tty_vis_loc tty_teletype_impl::logical_to_visible(llong lline)
 {
     bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
 
     if (wrap_enabled) {
         if (lline < 0) {
-            return tty_line_loff{ -1, 0 };
+            return tty_vis_loc{ -1, 0 };
         }
         if (lline < hist.loffsets.size()) {
-            return tty_line_loff{
-                tty_int48_get(hist.loffsets[lline].vline),
+            return tty_vis_loc{
+                tty_int48_get(hist.loffsets[lline].vrow),
                 tty_int48_get(hist.loffsets[lline].count)
             };
         } else {
-            size_t last = hist.loffsets.size() - 1;
-            return tty_line_loff{ (llong)hist.voffsets.size(), 0 };
+            llong size = (llong)hist.voffsets.size();
+            llong delta = lline - (llong)hist.loffsets.size();
+            return tty_vis_loc{ size + delta, 0 };
         }
     } else {
-        return tty_line_loff{ lline, 0 };
+        return tty_vis_loc{ lline, 0 };
     }
 }
 
@@ -717,9 +910,11 @@ llong tty_teletype_impl::total_rows()
     return wrap_enabled ? hist.voffsets.size() : hist.lines.size();
 }
 
-llong tty_teletype_impl::total_lines()
+llong tty_teletype_impl::total_cols()
 {
-    return hist.lines.size();
+    bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
+
+    return wrap_enabled ? ws.vis_cols : std::max(ws.vis_cols, max_cols);
 }
 
 llong tty_teletype_impl::visible_rows()
@@ -727,41 +922,110 @@ llong tty_teletype_impl::visible_rows()
     return ws.vis_rows;
 }
 
-llong tty_teletype_impl::visible_lines()
+llong tty_teletype_impl::visible_cols()
 {
-    bool wrap_enabled = (flags & tty_flag_DECAWM) > 0;
-    llong rows = ws.vis_rows;
+    return ws.vis_cols;
+}
 
-    if (wrap_enabled) {
-        /*
-         * calculate the number of visible lines so that we can calculate
-         * absolute position while considering dynamically wrapped lines.
-         */
-        llong row_count = total_rows(), wrapped_rows = 0;
-        for (llong j = row_count-1, l = 0; l < rows && j >= 0; j--, l++)
-        {
-            if (j >= row_count) continue;
-            if (visible_to_logical(j).offset > 0) wrapped_rows++;
-        }
-        return rows - wrapped_rows;
-    } else {
-        return rows;
+llong tty_teletype_impl::scroll_top()
+{
+    return top_marg == 0 ? 1
+        : std::max(1ll, std::min(top_marg, ws.vis_rows));
+}
+
+llong tty_teletype_impl::scroll_bottom()
+{
+    return bot_marg == 0 ? ws.vis_rows
+        : std::max(1ll, std::min(bot_marg, ws.vis_rows));
+}
+
+bool tty_teletype_impl::scroll_top_enabled()
+{
+    return scroll_top() != 1;
+}
+
+bool tty_teletype_impl::scroll_bottom_enabled()
+{
+    return scroll_bottom() != ws.vis_rows;
+}
+
+llong tty_teletype_impl::scroll_row()
+{
+    return scr_row;
+}
+
+llong tty_teletype_impl::scroll_row_limit()
+{
+    return std::max(0ll, total_rows() - visible_rows());
+}
+
+llong tty_teletype_impl::scroll_col()
+{
+    return scr_col;
+}
+
+llong tty_teletype_impl::scroll_col_limit()
+{
+    return std::max(0ll, total_cols() - visible_cols());
+}
+
+void tty_teletype_impl::set_scroll_row(llong row)
+{
+    llong new_scroll_row = std::max(std::min(row, scroll_row_limit()), 0ll);
+    if (scr_row != new_scroll_row) {
+        scr_row = new_scroll_row;
+        needs_update = 1;
     }
 }
 
-llong tty_teletype_impl::get_cur_row()
+void tty_teletype_impl::set_scroll_col(llong col)
 {
-    return cur_row;
+    llong new_scroll_col = std::max(std::min(col, scroll_col_limit()), 0ll);
+    if (scr_col != new_scroll_col) {
+        scr_col = new_scroll_col;
+        needs_update = 1;
+    }
 }
 
-llong tty_teletype_impl::get_cur_col()
+llong tty_teletype_impl::top_row()
 {
-    return cur_col;
+    return (llong)std::max(size_t(ws.vis_rows), hist.voffsets.size()) - ws.vis_rows;
 }
 
-bool tty_teletype_impl::has_flag(uint check)
+llong tty_teletype_impl::cursor_row()
 {
-    return (flags & check) == check;
+    tty_vis_loc vloc = logical_to_visible(cur_line);
+    return vloc.vrow + std::min(vloc.count,
+        cur_offset / ws.vis_cols - cur_overflow);
+}
+
+llong tty_teletype_impl::cursor_col()
+{
+    return cur_offset % ws.vis_cols;
+}
+
+llong tty_teletype_impl::cursor_line()
+{
+    return cur_line;
+}
+
+llong tty_teletype_impl::cursor_offset()
+{
+    return cur_offset;
+}
+
+bool tty_teletype_impl::has_flag(uint flag)
+{
+    return (flags & flag) == flag;
+}
+
+void tty_teletype_impl::set_flag(uint flag, bool value)
+{
+    if (value) {
+        flags |= flag;
+    } else {
+        flags &= ~flag;
+    }
 }
 
 tty_winsize tty_teletype_impl::get_winsize()
@@ -773,61 +1037,133 @@ void tty_teletype_impl::set_winsize(tty_winsize d)
 {
     if (ws != d) {
         ws = d;
-        min_row = 0;
+        min_line = 0;
     }
 }
 
-void tty_teletype_impl::set_row(llong row)
+static const char* coord_type(tty_coord c)
 {
-    if (row < 0) row = 0;
-    if (row != cur_row) {
-        if (row >= hist.lines.size()) {
-            hist.lines.resize(row + 1);
+    switch (c.type) {
+    case coord_type_abs: return "abs";
+    case coord_type_rel: return "rel";
+    case coord_type_none: default: break;
+    }
+    return "none";
+}
+
+void tty_teletype_impl::move(tty_coord row, tty_coord col)
+{
+    //Trace("move: %s(%lld) %s(%lld)\n", coord_type(row), row.val, coord_type(col), col.val);
+
+    llong old_line = cur_line;
+    llong old_offset = cur_offset;
+    llong old_overflow = cur_overflow;
+
+    llong new_line = old_line;
+    llong new_offset = old_offset;
+    llong new_overflow = old_overflow;
+
+    tty_vis_loc vloc;
+    tty_log_loc lloc;
+
+    llong trow;
+    llong tcol;
+
+    update_offsets();
+
+    /*
+     * handle scrolling at the bottom of the scroll region
+     */
+    if (scroll_bottom_enabled() &&
+        scroll_bottom() == cursor_row() - top_row() + 1 &&
+        row.type == coord_type_rel && row.val == 1)
+    {
+        /* save cursor position */
+        trow = cursor_row();
+        tcol = cursor_col();
+
+        /* as scrolling invalidates the cursor position */
+        hist.invalidate_cache();
+        if (scroll_top_enabled()) {
+            tty_log_loc tloc = visible_to_logical(top_row() + scroll_top() - 1);
+            tty_log_loc bloc = visible_to_logical(top_row() + scroll_bottom() - 1);
+            hist.lines.insert(hist.lines.begin() + bloc.lline + 1, tty_packed_line{});
+            hist.lines.erase(hist.lines.begin() + tloc.lline);
+            min_line = std::min(min_line, tloc.lline);
+        } else {
+            tty_log_loc bloc = visible_to_logical(top_row() + scroll_bottom() - 1);
+            hist.lines.insert(hist.lines.begin() + bloc.lline + 1, tty_packed_line{});
         }
-        min_row = std::min(min_row, (cur_row = row));
         update_offsets();
-    }
-}
 
-void tty_teletype_impl::set_col(llong col)
-{
-    if (col < 0) col = 0;
-    if (col != cur_col) {
-        cur_col = col;
+        /* restore cursor position */
+        tty_log_loc lloc = visible_to_logical(trow);
+        cur_line = lloc.lline;
+        cur_offset = lloc.loff + cursor_col();
+        min_line = std::min(min_line, cur_line);
     }
-}
 
-void tty_teletype_impl::move_abs(llong row, llong col)
-{
-    Trace("move_abs: %lld %lld\n", row, col);
-    if (row != -1) {
-        update_offsets();
-        llong vis_lines = visible_lines();
-        size_t new_row = std::max(0ll, std::min((llong)hist.lines.size() - 1,
-                        (llong)hist.lines.size() - vis_lines + row - 1));
-        set_row(new_row);
+    switch (row.type) {
+    case coord_type_none:
+        break;
+    case coord_type_rel:
+        new_overflow = false;
+        vloc = logical_to_visible(new_line);
+        trow = std::max(0ll, vloc.vrow + new_offset / ws.vis_cols + row.val);
+        tcol = std::max(0ll, new_offset % ws.vis_cols);
+        lloc = visible_to_logical(trow);
+        new_line = lloc.lline;
+        new_offset = lloc.loff + tcol;
+        break;
+    case coord_type_abs:
+        new_overflow = false;
+        trow = std::min(ws.vis_rows, std::max(1ll, row.val)) - 1ll;
+        tcol = std::max(0ll, new_offset % ws.vis_cols);
+        lloc = visible_to_logical(top_row() + trow);
+        new_line = lloc.lline;
+        new_offset = lloc.loff + tcol;
+        break;
     }
-    if (col != -1) {
-        set_col(std::max(0ll, col - 1));
+
+    switch (col.type) {
+    case coord_type_none:
+        break;
+    case coord_type_rel:
+        vloc = logical_to_visible(new_line);
+        tcol = std::max(0ll, (new_offset + col.val) % ws.vis_cols);
+        trow = std::max(0ll, vloc.vrow + new_offset / ws.vis_cols);
+        lloc = visible_to_logical(trow);
+        new_line = lloc.lline;
+        new_offset = lloc.loff + tcol;
+        break;
+    case coord_type_abs:
+        vloc = logical_to_visible(new_line);
+        tcol = std::min(ws.vis_cols, std::max(1ll, col.val)) - 1ll;
+        trow = std::max(0ll, vloc.vrow + new_offset / ws.vis_cols - new_overflow);
+        lloc = visible_to_logical(trow);
+        new_line = lloc.lline;
+        new_offset = lloc.loff + tcol;
+        break;
     }
-}
 
-void tty_teletype_impl::move_rel(llong row, llong col)
-{
-    Trace("move_rel: %lld %lld\n", row, col);
-    llong new_row = cur_row + row;
-    llong new_col = col == tty_col_home ? 0 : cur_col + col;
-    if (new_row < 0) new_row = 0;
-    if (new_col < 0) new_col = 0;
-    set_row(new_row);
-    set_col(new_col);
-}
+    new_overflow = false;
 
-void tty_teletype_impl::scroll_region(llong line0, llong line1)
-{
-    Trace("scroll_region: %lld %lld\n", line0, line1);
-    top_marg = line0;
-    bot_marg = line1;
+    cur_line = new_line;
+    cur_offset = new_offset;
+    cur_overflow = new_overflow;
+
+    if (cur_line >= hist.lines.size()) {
+        hist.lines.resize(cur_line + 1);
+    }
+    min_line = std::min(min_line, cur_line);
+
+    Trace("move: %s(%lld) %s(%lld) "
+        "# cursor (%lld,%lld%s) -> (%lld,%lld%s) "
+        "# winsize (%lld,%lld)\n",
+        coord_type(row), row.val, coord_type(col), col.val,
+        old_line, old_offset, old_overflow ? "+" : "",
+        new_line, new_offset, new_overflow ? "+" : "",
+        ws.vis_rows, ws.vis_cols);
 }
 
 void tty_teletype_impl::reset_style()
@@ -845,108 +1181,160 @@ void tty_teletype_impl::set_fd(int fd)
 void tty_teletype_impl::reset()
 {
     Trace("reset\n");
-    move_abs(1, 1);
+    move(coord_abs(1), coord_abs(1));
     reset_style();
 }
 
 void tty_teletype_impl::erase_screen(uint arg)
 {
     Trace("erase_screen: %d\n", arg);
+
+    llong start, end;
+
     switch (arg) {
     case tty_clear_end:
-        for (size_t row = cur_row; row < hist.lines.size(); row++) {
-            hist.clear_line(row);
-        }
+        start = cursor_row();
+        end = total_rows();
         break;
     case tty_clear_start:
-        for (ssize_t row = cur_row; row < hist.lines.size(); row--) {
-            hist.clear_line(row);
-        }
+        start = top_row();
+        end = cursor_row();
         break;
     case tty_clear_all:
-        for (size_t row = 0; row < hist.lines.size(); row++) {
-            hist.clear_line(row);
-        }
-        move_abs(1, 1);
+        start = top_row();
+        end = total_rows();
         break;
+    }
+
+    for (ssize_t row = start; row < end; row++)
+    {
+        tty_log_loc lloc = visible_to_logical(row);
+        hist.erase_line(lloc.lline, lloc.loff, lloc.loff + ws.vis_cols,
+            ws.vis_cols, tmpl);
     }
 }
 
 void tty_teletype_impl::erase_line(uint arg)
 {
     Trace("erase_line: %d\n", arg);
+
+    llong row = cursor_row(), col = cursor_col();
+
+    if (cur_overflow) return;
+
+    auto round_offset = [&](llong offset, llong addend) -> llong {
+        return ((offset + addend) / ws.vis_cols) * ws.vis_cols;
+    };
+
     switch (arg) {
     case tty_clear_end:
-        if (cur_col < hist.count_cells(cur_row)) {
-            tty_line &line = hist.get_line(cur_row, true);
-            line.cells.resize(cur_col);
-        }
+        hist.erase_line(cur_line, cur_offset,
+            round_offset(cur_offset, ws.vis_cols), ws.vis_cols, tmpl);
         break;
     case tty_clear_start:
-        if (cur_col < hist.count_cells(cur_row)) {
-            tty_line &line = hist.get_line(cur_row, true);
-            tty_cell cell = tmpl;
-            cell.codepoint = ' ';
-            for (size_t col = 0; col < cur_col; col++) {
-                line.cells[col] = cell;
-            }
-        }
+        hist.erase_line(cur_line, round_offset(cur_offset, 0),
+            cur_offset, ws.vis_cols, tmpl);
         break;
-    case tty_clear_all: {
-        tty_line &line = hist.get_line(cur_row, true);
-        line.cells.resize(0);
+    case tty_clear_all:
+        hist.erase_line(cur_line, round_offset(cur_offset, 0),
+            round_offset(cur_offset, ws.vis_cols), ws.vis_cols, tmpl);
         break;
     }
-    }
+
+    update_offsets();
+
+    tty_log_loc lloc = visible_to_logical(row);
+    cur_line = lloc.lline;
+    cur_offset = lloc.loff + col;
 }
 
 void tty_teletype_impl::insert_lines(uint arg)
 {
     Trace("insert_lines: %d\n", arg);
     if (arg == 0) return;
-    // consider line editing mode: *following*, or preceding
-    // consider bottom margin for following mode. add bounds checks
-    llong top = top_marg == 0 ? 1           : top_marg;
-    llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
-    llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
+    // todo: consider line editing mode: *following*, or preceding
+    // todo: handle case where lines are wrapping (parial insert and erase)
+    tty_log_loc tloc = visible_to_logical(top_row() + scroll_top() - 1);
+    tty_log_loc bloc = visible_to_logical(top_row() + scroll_bottom() - 1);
+    if (cur_line < tloc.lline || cur_line > bloc.lline) return;
     hist.invalidate_cache();
     for (uint i = 0; i < arg; i++) {
-        hist.lines.insert(hist.lines.begin() + cur_row, tty_packed_line{});
-        hist.lines.erase(hist.lines.end() - 1 - scrolloff);
+        hist.lines.erase(hist.lines.begin() + bloc.lline);
+        hist.lines.insert(hist.lines.begin() + cur_line, tty_packed_line{});
     }
-    cur_col = 0;
+    cur_offset = 0;
 }
 
 void tty_teletype_impl::delete_lines(uint arg)
 {
     Trace("delete_lines: %d\n", arg);
     if (arg == 0) return;
-    // consider line editing mode: *following*, or preceding
-    // consider bottom margin for following mode. add bounds checks
-    llong top = top_marg == 0 ? 1           : top_marg;
-    llong bot = bot_marg == 0 ? ws.vis_rows : bot_marg;
-    llong scrolloff = bot < ws.vis_rows ? ws.vis_rows - bot : 0;
+    // todo: consider line editing mode: *following*, or preceding
+    // todo: handle case where lines are wrapping (parial insert and erase)
+    tty_log_loc tloc = visible_to_logical(top_row() + scroll_top() - 1);
+    tty_log_loc bloc = visible_to_logical(top_row() + scroll_bottom() - 1);
+    if (cur_line < tloc.lline || cur_line > bloc.lline) return;
     hist.invalidate_cache();
     for (uint i = 0; i < arg; i++) {
-        if (cur_row < hist.lines.size()) {
-            hist.lines.erase(hist.lines.begin() + cur_row);
-            hist.lines.insert(hist.lines.end() - scrolloff, tty_packed_line{});
+        if (cur_line < hist.lines.size()) {
+            hist.lines.erase(hist.lines.begin() + cur_line);
+            hist.lines.insert(hist.lines.begin() + bloc.lline, tty_packed_line{});
         }
     }
-    cur_col = 0;
+    cur_offset = 0;
 }
 
 void tty_teletype_impl::delete_chars(uint arg)
 {
     Trace("delete_chars: %d\n", arg);
     for (size_t i = 0; i < arg; i++) {
-        if (cur_col < hist.count_cells(cur_row)) {
-            tty_line &line = hist.get_line(cur_row, true);
+        if (cur_offset < hist.count_cells(cur_line)) {
+            tty_line &line = hist.get_line(cur_line, true);
             line.cells.erase(
-                line.cells.begin() + cur_col
+                line.cells.begin() + cur_offset
             );
         }
     }
+}
+
+void tty_teletype_impl::handle_scroll()
+{
+    Trace("handle_scroll\n");
+    if (cursor_row() == top_row())
+    {
+        llong row = cursor_row(), col = cursor_col();
+        tty_log_loc bloc = visible_to_logical(top_row() + scroll_bottom() - 1);
+        hist.invalidate_cache();
+        hist.lines.erase(hist.lines.begin() + bloc.lline);
+        update_offsets();
+        tty_log_loc lloc = visible_to_logical(row);
+        cur_line = lloc.lline;
+        cur_offset = lloc.loff + col;
+    }
+    move(coord_rel(-1), coord_none());
+}
+
+void tty_teletype_impl::handle_scroll_region(llong line0, llong line1)
+{
+    Trace("handle_scroll_region: %lld %lld\n", line0, line1);
+    top_marg = line0;
+    bot_marg = line1;
+}
+
+void tty_teletype_impl::handle_save_cursor()
+{
+    Trace("handle_save_cursor\n");
+    sav_row = cursor_row();
+    sav_col = cursor_col();
+}
+
+void tty_teletype_impl::handle_restore_cursor()
+{
+    Trace("handle_restore_cursor\n");
+    tty_log_loc lloc = visible_to_logical(sav_row);
+    cur_line = lloc.lline;
+    cur_offset = lloc.loff + sav_col;
+    min_line = std::min(min_line, cur_line);
 }
 
 void tty_teletype_impl::handle_bell()
@@ -957,41 +1345,59 @@ void tty_teletype_impl::handle_bell()
 void tty_teletype_impl::handle_backspace()
 {
     Trace("handle_backspace\n");
-    if (cur_col > 0) cur_col--;
+    move(coord_none(), coord_rel(-1));
 }
 
 void tty_teletype_impl::handle_horizontal_tab()
 {
     Trace("handle_horizontal_tab\n");
-    cur_col = (cur_col + 8) & ~7;
+    move(coord_none(), coord_rel(8 - (cur_offset % 8)));
 }
 
 void tty_teletype_impl::handle_line_feed()
 {
     Trace("handle_line_feed\n");
-    set_row(cur_row + 1);
+    move(coord_rel(1), coord_none());
 }
 
 void tty_teletype_impl::handle_carriage_return()
 {
     Trace("handle_carriage_return\n");
-    cur_col = 0;
+    move(coord_none(), coord_abs(1));
 }
 
 void tty_teletype_impl::handle_bare(uint c)
 {
-    Trace("handle_bare: %s\n", char_str(c).c_str());
-    tty_line &line = hist.get_line(cur_row, true);
-    if (cur_col >= line.cells.size()) {
-        line.cells.resize(cur_col + 1);
+    /* join with next line if we wrap */
+    if (cur_offset >= ws.vis_cols &&
+        cur_offset % ws.vis_cols == 0 &&
+        hist.count_cells(cur_line) % ws.vis_cols == 0 &&
+        cur_line < hist.lines.size() - 1)
+    {
+        tty_line &curr_line = hist.get_line(cur_line, true);
+        tty_line &next_line = hist.get_line(cur_line + 1, true);
+        curr_line.cells.resize(cur_offset + next_line.cells.size());
+        for (size_t i = 0; i < next_line.cells.size(); i++) {
+            curr_line.cells[cur_offset + i] = next_line.cells[i];
+        }
+        hist.invalidate_cache();
+        hist.lines.erase(hist.lines.begin() + cur_line + 1);
+        update_offsets();
     }
-    line.cells[cur_col++] =
+
+    tty_line &line = hist.get_line(cur_line, true);
+
+    if (cur_offset >= line.cells.size()) {
+        line.cells.resize(cur_offset + 1);
+    }
+    line.cells[cur_offset++] =
         tty_cell{c, tmpl.flags, tmpl.fg, tmpl.bg};
+
+    cur_overflow = cur_offset % ws.vis_cols == 0;
 }
 
-void tty_teletype_impl::handle_control_character(uint c)
+void tty_teletype_impl::handle_control(uint c)
 {
-    Trace("handle_control_character: %s\n", char_str(c).c_str());
     switch (c) {
     case tty_char_BEL: handle_bell(); break;
     case tty_char_BS: handle_backspace(); break;
@@ -999,36 +1405,41 @@ void tty_teletype_impl::handle_control_character(uint c)
     case tty_char_LF: handle_line_feed(); break;
     case tty_char_CR: handle_carriage_return(); break;
     default:
-        Debug("handle_control_character: unhandled control character %s\n",
+        Trace("handle_control: unhandled control character %s\n",
             char_str(c).c_str());
     }
 }
 
-void tty_teletype_impl::xtwinops()
-{
-    Debug("xtwinops: %s unimplemented\n", args_str().c_str());
-}
-
 void tty_teletype_impl::handle_charset(uint cmd, uint set)
 {
-    Debug("handle_charset: %c %c unimplemented\n", cmd, set);
+    Trace("handle_charset: %c %c unimplemented\n", cmd, set);
 }
 
-void tty_teletype_impl::osc(uint c)
+void tty_teletype_impl::handle_keypad_mode(bool set)
 {
-    Debug("osc: %s %s unimplemented\n",
+    Trace("handle_keypad_mode: unimplemented");
+}
+
+void tty_teletype_impl::handle_window_manager()
+{
+    Trace("handle_window_manager: %s unimplemented\n", args_str().c_str());
+}
+
+void tty_teletype_impl::handle_osc(uint c)
+{
+    Trace("handle_osc: %s %s\n",
         args_str().c_str(), char_str(c).c_str());
     if (argc == 1 && argv[0] == 555) {
-        Debug("osc: screen-capture\n");
+        Trace("osc: screen-capture\n");
         set_needs_capture();
     } else if (argc == 1 && argv[0] == 556) {
         hist.dump_stats();
     }
 }
 
-void tty_teletype_impl::osc_string(uint c)
+void tty_teletype_impl::handle_osc_string(uint c)
 {
-    Debug("osc_string: %s %s \"%s\" unimplemented\n",
+    Trace("handle_osc_string: %s %s \"%s\" unimplemented\n",
         args_str().c_str(), char_str(c).c_str(), osc_data.c_str());
 }
 
@@ -1040,15 +1451,15 @@ static tty_private_mode_rec* tty_lookup_private_mode_rec(uint code)
     return NULL;
 }
 
-void tty_teletype_impl::csi_private_mode(uint code, uint set)
+void tty_teletype_impl::handle_csi_private_mode(uint code, uint set)
 {
     tty_private_mode_rec *rec = tty_lookup_private_mode_rec(code);
     if (rec == NULL) {
-        Debug("csi_private_mode: %s flag %d: unimplemented\n",
-            set ? "set" : "clear", code);
+        Trace("handle_csi_private_mode: flag %d: unknown = %s\n",
+            code, set ? "enabled" : "disabled");
     } else {
-        Debug("csi_private_mode: %s flag %d: %s\n",
-            set ? "set" : "clear", code, rec->name);
+        Trace("handle_csi_private_mode: flag %d: %s = %s\n",
+            code, rec->name, set ? "enabled" : "disabled");
         if (set) {
             flags |= rec->flag;
         } else {
@@ -1057,93 +1468,101 @@ void tty_teletype_impl::csi_private_mode(uint code, uint set)
     }
 }
 
-void tty_teletype_impl::csi_dec(uint c)
+void tty_teletype_impl::handle_csi_dec(uint c)
 {
     switch (c) {
-    case 'l': csi_private_mode(opt_arg(0, 0), 0); break;
-    case 'h': csi_private_mode(opt_arg(0, 0), 1); break;
+    case 'l':
+        for (size_t i = 0; i < argc; i++) {
+            handle_csi_private_mode(opt_arg(i, 0), 0);
+        }
+        break;
+    case 'h':
+        for (size_t i = 0; i < argc; i++) {
+            handle_csi_private_mode(opt_arg(i, 0), 1);
+        }
+        break;
     default:
-        Debug("csi_dec: %s %s unimplemented\n",
+        Trace("handle_csi_dec: %s %s unimplemented\n",
             char_str(c).c_str(), args_str().c_str());
         break;
     }
 }
 
-void tty_teletype_impl::csi_dec2(uint c)
+void tty_teletype_impl::handle_csi_dec2(uint c)
 {
-    Debug("csi_dec2: %s %s unimplemented\n",
+    Trace("handle_csi_dec2: %s %s unimplemented\n",
         char_str(c).c_str(), args_str().c_str());
 }
 
-void tty_teletype_impl::csi_dec3(uint c)
+void tty_teletype_impl::handle_csi_dec3(uint c)
 {
-    Debug("csi_dec3: %s %s unimplemented\n",
+    Trace("handle_csi_dec3: %s %s unimplemented\n",
         char_str(c).c_str(), args_str().c_str());
 }
 
-void tty_teletype_impl::csi_dsr()
+void tty_teletype_impl::handle_csi_dsr()
 {
-    Trace("csi_dsr: %s\n", args_str().c_str());
+    Trace("handle_csi_dsr: %s\n", args_str().c_str());
     switch (opt_arg(0, 0)) {
     case 6: { /* report cursor position */
         char buf[32];
         update_offsets();
-        llong vis_lines = visible_lines();
-        llong col = cur_col + 1;
-        llong row = cur_row - (hist.lines.size() - vis_lines) + 1;
-        row = std::max(1ll, std::min(row, vis_lines));
+        llong col = (cur_offset % ws.vis_cols) + 1;
+        llong row = (cursor_row() - top_row()) + 1;
+        row = std::max(1ll, std::min(row, (llong)ws.vis_rows));
+        col = std::max(1ll, std::min(col, (llong)ws.vis_cols));
         int len = snprintf(buf, sizeof(buf), "\x1b[%llu;%lluR", row, col);
         emit(buf, len);
         break;
     }
     default:
-        Debug("csi_dsr: %s\n", args_str().c_str());
+        Trace("handle_csi_dsr: %s\n", args_str().c_str());
         break;
     }
 }
 
-void tty_teletype_impl::csi(uint c)
+void tty_teletype_impl::handle_csi(uint c)
 {
-    Trace("csi: %s %s\n",
+    Trace("handle_csi: %s %s\n",
         args_str().c_str(), char_str(c).c_str());
 
     switch (c) {
     case '@': /* insert blanks */
     {
-        tty_line &line = hist.get_line(cur_row, true);
+        tty_line &line = hist.get_line(cur_line, true);
         int n = opt_arg(0, 0);
-        if (cur_col < line.cells.size()) {
+        if (cur_offset < line.cells.size()) {
             tty_cell cell = tmpl;
             cell.codepoint = ' ';
             for (size_t i = 0; i < n; i++) {
-                line.cells.insert(line.cells.begin() + cur_col, cell);
+                line.cells.insert(line.cells.begin() + cur_offset, cell);
             }
         }
         break;
     }
     case 'A': /* move up */
-        move_rel(-opt_arg(0, 1), 0);
+        move(coord_rel(-opt_arg(0, 1)), coord_none());
         break;
     case 'B': /* move down */
-        move_rel(opt_arg(0, 1),  0);
+        move(coord_rel(opt_arg(0, 1)),  coord_none());
         break;
     case 'C': /* move right */
-        move_rel(0,  opt_arg(0, 1));
+        move(coord_none(),  coord_rel(opt_arg(0, 1)));
         break;
     case 'D': /* move left */
-        move_rel(0, -opt_arg(0, 1));
+        move(coord_none(), coord_rel(-opt_arg(0, 1)));
         break;
     case 'E': /* move next line */
-        move_rel(opt_arg(0, 1), tty_col_home);
+        move(coord_rel(opt_arg(0, 1)), coord_abs(1));
         break;
     case 'F': /* move prev line */
-        move_rel(-opt_arg(0, 1), tty_col_home);
+        move(coord_rel(-opt_arg(0, 1)), coord_abs(1));
         break;
     case 'G': /* move to {col} */
-        move_abs(-1, opt_arg(0, 1));
+        move(coord_none(), coord_abs(opt_arg(0, 1)));
         break;
     case 'H': /* move to {line};{col} */
-        move_abs(opt_arg(0, 1), opt_arg(1, 1));
+        move(coord_abs(opt_arg(0, 1)), coord_abs(opt_arg(1, 1)));
         break;
     case 'J': /* erase lines {0=to-end,1=from-start,2=all} */
         switch (opt_arg(0, 0)) {
@@ -1151,7 +1570,7 @@ void tty_teletype_impl::csi(uint c)
         case 1: erase_screen(tty_clear_start); break;
         case 2: erase_screen(tty_clear_all); break;
         default:
-            Debug("csi: CSI J: invalid arg: %d\n", opt_arg(0, 0));
+            Trace("handle_csi: CSI J: invalid arg: %d\n", opt_arg(0, 0));
             break;
         }
         break;
@@ -1161,7 +1580,7 @@ void tty_teletype_impl::csi(uint c)
         case 1: erase_line(tty_clear_start); break;
         case 2: erase_line(tty_clear_all); break;
         default:
-            Debug("csi: CSI K: invalid arg: %d\n", opt_arg(0, 0));
+            Trace("handle_csi: CSI K: invalid arg: %d\n", opt_arg(0, 0));
             break;
         }
         break;
@@ -1175,13 +1594,13 @@ void tty_teletype_impl::csi(uint c)
         delete_chars(opt_arg(0, 1));
         break;
     case 'd': /* move to {line};1 absolute */
-        move_abs(opt_arg(0, 1), -1);
+        move(coord_abs(opt_arg(0, 1)), coord_none());
         break;
     case 'e': /* move to {line};1 relative */
-        move_rel(opt_arg(0, 1), 0);
+        move(coord_rel(opt_arg(0, 1)), coord_none());
         break;
     case 'f': /* move to {line};{col} absolute */
-        move_abs(opt_arg(0, 1), opt_arg(1, 1));
+        move(coord_abs(opt_arg(0, 1)), coord_abs(opt_arg(1, 1)));
         break;
     case 'm': /* color and formatting */
         if (argc == 0) {
@@ -1281,20 +1700,24 @@ void tty_teletype_impl::csi(uint c)
         }
         break;
     case 'n': /* device status report */
-        csi_dsr();
+        handle_csi_dsr();
         break;
     case 'r': /* set scrolling region {line-start};{line-end}*/
-        scroll_region(opt_arg(0, 1), opt_arg(1, 1));
+        handle_scroll_region(opt_arg(0, 1), opt_arg(1, 1));
         break;
     case 't': /* window manager hints */
-        xtwinops();
+        handle_window_manager();
         break;
     }
 }
 
 void tty_teletype_impl::absorb(uint c)
 {
-    Trace("absorb: %s\n", char_str(c).c_str());
+    if (logger::L::Ltrace >= logger::level) {
+        trace_charseq.push_back(c);
+        trace_counter++;
+    }
+
 restart:
     switch (state) {
     case tty_state_normal:
@@ -1313,11 +1736,11 @@ restart:
                 state = tty_state_escape;
                 argc = code = 0;
             } else if (c < 0x20) {
-                handle_control_character(c);
+                handle_control(c);
             } else {
                 handle_bare(c);
             }
-            tty_line &line = hist.get_line(cur_row, true);
+            tty_line &line = hist.get_line(cur_line, true);
             memcpy(&line.tv, &tv, sizeof(tv));
         }
         break;
@@ -1342,6 +1765,18 @@ restart:
         case ']':
             state = tty_state_osc0;
             return;
+        case 'M':
+            handle_scroll();
+            state = tty_state_normal;
+            break;
+        case '7':
+            handle_save_cursor();
+            state = tty_state_normal;
+            break;
+        case '8':
+            handle_restore_cursor();
+            state = tty_state_normal;
+            break;
         case '(':
         case '*':
         case '+':
@@ -1352,15 +1787,15 @@ restart:
             state = tty_state_charset;
             return;
         case '=':
-            Debug("absorb: enter alternate keypad mode: unimplemented\n");
+            handle_keypad_mode(true);
             state = tty_state_normal;
-            return;
+            break;
         case '>':
-            Debug("absorb: exit alternate keypad mode: unimplemented\n");
+            handle_keypad_mode(false);
             state = tty_state_normal;
-            return;
+            break;
         default:
-            Debug("absorb: invalid ESC char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid ESC char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             break;
         }
@@ -1380,7 +1815,7 @@ restart:
         case 'J': case 'K': case 'L': case 'M': case 'P':
         case 'd': case 'e': case 'f': case 'm': case 'n':
         case 'r': case 't':
-            csi(c);
+            handle_csi(c);
             state = tty_state_normal;
             break;
         case '?': /* DEC */
@@ -1393,7 +1828,7 @@ restart:
             state = tty_state_csi_dec3;
             break;
         default:
-            Debug("absorb: invalid CSI char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid CSI char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             goto restart;
         }
@@ -1408,7 +1843,7 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI too many args, ignoring %d\n",
+                Trace("absorb: CSI too many args, ignoring %d\n",
                     code);
             }
             break;
@@ -1420,14 +1855,14 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI too many args, ignoring %d\n",
+                Trace("absorb: CSI too many args, ignoring %d\n",
                     code);
             }
-            csi(c);
+            handle_csi(c);
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid CSI char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid CSI char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             break;
         }
@@ -1442,7 +1877,7 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI ? too many args, ignoring %d\n",
+                Trace("absorb: CSI ? too many args, ignoring %d\n",
                     code);
             }
             break;
@@ -1451,14 +1886,14 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI ? too many args, ignoring %d\n",
+                Trace("absorb: CSI ? too many args, ignoring %d\n",
                     code);
             }
-            csi_dec(c);
+            handle_csi_dec(c);
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid CSI ? char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid CSI ? char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             break;
         }
@@ -1473,18 +1908,18 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI > too many args, ignoring %d\n",
+                Trace("absorb: CSI > too many args, ignoring %d\n",
                     code);
             }
-            csi_dec2(c);
+            handle_csi_dec2(c);
             state = tty_state_normal;
             break;
         case 'c': /* device report */
-            Debug("absorb: CSI > device report\n");
+            Trace("absorb: CSI > device report\n");
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid CSI > char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid CSI > char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             break;
         }
@@ -1499,7 +1934,7 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI = too many args, ignoring %d\n",
+                Trace("absorb: CSI = too many args, ignoring %d\n",
                     code);
             }
             break;
@@ -1507,14 +1942,14 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: CSI = too many args, ignoring %d\n",
+                Trace("absorb: CSI = too many args, ignoring %d\n",
                     code);
             }
-            csi_dec3(c);
+            handle_csi_dec3(c);
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid CSI = char '%c' (0x%02x)\n", c, c);
+            Trace("absorb: invalid CSI = char '%c' (0x%02x)\n", c, c);
             state = tty_state_normal;
             break;
         }
@@ -1526,12 +1961,11 @@ restart:
             state = tty_state_osc;
             goto restart;
         case tty_char_BEL:
-            osc(c);
+            handle_osc(c);
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid OSC char '%c' (0x%02x)\n", c, c);
-            //state = tty_state_normal;
+            Trace("absorb: invalid OSC char '%c' (0x%02x)\n", c, c);
             break;
         }
         break;
@@ -1545,7 +1979,7 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: OSC too many args, ignoring %d\n",
+                Trace("absorb: OSC too many args, ignoring %d\n",
                     code);
             }
             if (argc == 1 && argv[0] == 7) {
@@ -1557,21 +1991,20 @@ restart:
             if (argc < array_size(argv)) {
                 argv[argc++] = code; code = 0;
             } else {
-                Debug("absorb: OSC too many args, ignoring %d\n",
+                Trace("absorb: OSC too many args, ignoring %d\n",
                     code);
             }
-            osc(c);
+            handle_osc(c);
             state = tty_state_normal;
             break;
         default:
             Debug("absorb: invalid OSC char '%c' (0x%02x)\n", c, c);
-            //state = tty_state_normal;
             break;
         }
         break;
     case tty_state_osc_string:
         if (c == tty_char_BEL) {
-            osc_string(c);
+            handle_osc_string(c);
             state = tty_state_normal;
         } else {
             osc_data.append(std::string(1, c));
@@ -1600,16 +2033,23 @@ ssize_t tty_teletype_impl::io()
         ssize_t count;
         if (out_start > out_end) {
             /* zero xxxxxxxx end ________ start <xxxxxx> limit */
-            count = out_buf.size() - out_start;
+            count = std::min(ssize_t(128), ssize_t(out_buf.size()) - out_start);
         } else {
             /* zero ________ start <xxxxxx> end ________ limit */
-            count = out_end - out_start;
+            count = std::min(ssize_t(128), out_end - out_start);
         }
         if (count > 0) {
             if ((len = write(fd, &out_buf[out_start], count)) < 0) {
                 Panic("write failed: %s\n", strerror(errno));
             }
-            Debug("io: wrote %zu bytes -> pty\n", len);
+            if (debug_io) {
+                logger::log(logger::L::Ltrace, "io: wrote %zu bytes -> pty\n", len);
+                if (logger::L::Ltrace >= logger::level) {
+                    dump_buffer((char*)&out_buf[out_start], len, [](const char* msg) {
+                        logger::log(logger::L::Ltrace, "io: wrote: %s\n", msg);
+                    });
+                }
+            }
             out_start += len;
         }
         if (out_start == out_buf.size()) {
@@ -1632,7 +2072,14 @@ ssize_t tty_teletype_impl::io()
             if ((len = ::read(fd, &in_buf[in_end], count)) < 0) {
                 Panic("read failed: %s\n", strerror(errno));
             }
-            Debug("io: read %zu bytes <- pty\n", len);
+            if (debug_io) {
+                logger::log(logger::L::Ltrace, "io: read %zu bytes -> pty\n", len);
+                if (logger::L::Ltrace >= logger::level) {
+                    dump_buffer((char*)&in_buf[in_end], len, [](const char* msg) {
+                        logger::log(logger::L::Ltrace, "io: read: %s\n", msg);
+                    });
+                }
+            }
             in_end += len;
             if (len == 0) return -1; /* EOF */
         }
@@ -1667,7 +2114,9 @@ ssize_t tty_teletype_impl::proc()
         in_start = 0;
     }
     if (count > 0) {
-        Debug("proc: processed %zu bytes of input\n", count);
+        if (debug_io) {
+            Trace("proc: absorbed %zu bytes of input\n", count);
+        }
     }
     return count;
 }
@@ -1685,7 +2134,9 @@ ssize_t tty_teletype_impl::emit(const char *buf, size_t len)
     if (count > 0) {
         ncopy = len < count ? len : count;
         memcpy(&out_buf[out_end], buf, ncopy);
-        Debug("write: buffered %zu bytes of output\n", len);
+        if (debug_io) {
+            Trace("write: buffered %zu bytes of output\n", len);
+        }
         out_end += ncopy;
     }
     if (out_start < out_end && out_end == out_buf.size()) {

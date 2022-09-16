@@ -50,15 +50,13 @@ struct tty_cellgrid
     virtual tty_style get_style() = 0;
     virtual void set_style(tty_style s) = 0;
     virtual tty_winsize get_winsize() = 0;
-    virtual llong get_scroll_row_limit() = 0;
-    virtual llong get_scroll_row() = 0;
-    virtual void set_scroll_row(llong row) = 0;
     virtual tty_font_metric get_font_metric() = 0;
     virtual font_face* get_font_face(tty_cellgrid_face face) = 0;
     virtual font_manager_ft* get_manager() = 0;
     virtual tty_teletype* get_teletype() = 0;
     virtual MVGCanvas* get_canvas() = 0;
     virtual ui9::Root* get_root() = 0;
+    virtual void update_scroll() = 0;
     virtual bool mouse_event(ui9::MouseEvent *me) = 0;
 };
 

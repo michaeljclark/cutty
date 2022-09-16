@@ -58,7 +58,9 @@ static bool overlay_stats = false;
 static bool execute_args = false;
 static bool enable_linenumbers = false;
 static bool enable_timestamps = false;
+static bool enable_scrollbars = false;
 
+static const char* app_name = "cutty";
 static const char* default_path = "bash";
 static const char * const default_argv[] = { "-bash", NULL };
 static const char* exec_path = default_path;
@@ -109,9 +111,8 @@ void app_set_clipboard(const char* str)
 static void keyboard(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (tty->keyboard(key, scancode, action, mods)) {
-        if (cg->get_scroll_row() != 0) {
-            cg->set_scroll_row(0);
-            tty->set_needs_update();
+        if (tty->scroll_row() != 0) {
+            tty->set_scroll_row(0);
         }
     }
 }
@@ -283,10 +284,13 @@ static void tty_app(int argc, char **argv)
     if (enable_linenumbers) {
         cg->set_flag(tty_cellgrid_linenumbers, true);
     }
+    if (enable_scrollbars) {
+        cg->set_flag(tty_cellgrid_scrollbars, true);
+    }
 
     tty_style style = cg->get_style();
 
-    window = glfwCreateWindow((int)style.width, (int)style.height, argv[0], NULL, NULL);
+    window = glfwCreateWindow((int)style.width, (int)style.height, app_name, NULL, NULL);
     glfwMakeContextCurrent(window);
     gladLoadGL();
     glfwSwapInterval(1);
@@ -348,6 +352,7 @@ void print_help(int argc, char **argv)
         "  -t, --trace               log trace messages\n"
         "  -d, --debug               log debug messages\n"
         "  -x, --execute             execute remaining args\n"
+        "  -S, --scroll-bars         enable scroll bars\n"
         "  -L, --line-numbers        enable line numbers column\n"
         "  -T, --time-stamps         enable time stamps column\n"
         "  -y, --overlay-stats       show statistics overlay\n"
@@ -394,6 +399,9 @@ void parse_options(int argc, char **argv)
             i++;
         } else if (match_opt(argv[i], "-T", "--time-stamps")) {
             enable_timestamps = true;
+            i++;
+        } else if (match_opt(argv[i], "-S", "--scroll-bars")) {
+            enable_scrollbars = true;
             i++;
         } else if (match_opt(argv[i], "-m", "--enable-msdf")) {
             manager.msdf_enabled = true;

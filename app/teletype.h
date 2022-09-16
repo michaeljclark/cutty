@@ -157,6 +157,7 @@ enum tty_flag
     tty_flag_XTAS     = (1 << 7),   // [ ] XTerm Alt Screen
     tty_flag_XTSC     = (1 << 8),   // [ ] XTerm Save Cursor
     tty_flag_XTBP     = (1 << 9),   // [X] XTerm Bracketed Paste
+    tty_flag_CUTSC    = (1 << 10),  // [X] Cutty Screen Capture
 };
 
 enum tty_col
@@ -178,10 +179,10 @@ struct tty_font_metric
 
 struct tty_winsize
 {
-    int vis_rows;
-    int vis_cols;
-    int pix_width;
-    int pix_height;
+    llong vis_rows;
+    llong vis_cols;
+    llong pix_width;
+    llong pix_height;
 
     template <typename... Args> constexpr auto tuple() {
         return std::tie(vis_rows, vis_cols, pix_width, pix_height);
@@ -191,8 +192,8 @@ struct tty_winsize
 inline bool operator==(tty_winsize &a, tty_winsize&b) { return a.tuple() == b.tuple(); }
 inline bool operator!=(tty_winsize &a, tty_winsize&b) { return a.tuple() != b.tuple(); }
 
-struct tty_line_voff { llong lline, offset; };
-struct tty_line_loff { llong vline, count; };
+struct tty_log_loc { llong lline, loff; };
+struct tty_vis_loc { llong vrow, count; };
 
 struct tty_teletype
 {
@@ -204,19 +205,28 @@ struct tty_teletype
     virtual bool get_needs_capture() = 0;
     virtual void set_needs_capture() = 0;
     virtual void update_offsets() = 0;
-    virtual tty_line_voff visible_to_logical(llong vline) = 0;
-    virtual tty_line_loff logical_to_visible(llong lline) = 0;
+    virtual tty_log_loc visible_to_logical(llong vrow) = 0;
+    virtual tty_vis_loc logical_to_visible(llong lline) = 0;
     virtual tty_line& get_line(llong lline) = 0;
     virtual void set_selection(tty_cell_span selection) = 0;
     virtual tty_cell_span get_selection() = 0;
     virtual std::string get_selected_text() = 0;
     virtual llong total_rows() = 0;
-    virtual llong total_lines() = 0;
+    virtual llong total_cols() = 0;
     virtual llong visible_rows() = 0;
-    virtual llong visible_lines() = 0;
-    virtual llong get_cur_row() = 0;
-    virtual llong get_cur_col() = 0;
-    virtual bool has_flag(uint check) = 0;
+    virtual llong visible_cols() = 0;
+    virtual llong scroll_row() = 0;
+    virtual llong scroll_row_limit() = 0;
+    virtual llong scroll_col() = 0;
+    virtual llong scroll_col_limit() = 0;
+    virtual void set_scroll_row(llong row) = 0;
+    virtual void set_scroll_col(llong col) = 0;
+    virtual llong top_row() = 0;
+    virtual llong cursor_row() = 0;
+    virtual llong cursor_line() = 0;
+    virtual llong cursor_offset() = 0;
+    virtual bool has_flag(uint flag) = 0;
+    virtual void set_flag(uint flag, bool value) = 0;
     virtual tty_winsize get_winsize() = 0;
     virtual void set_winsize(tty_winsize dim) = 0;
     virtual void set_fd(int fd) = 0;
