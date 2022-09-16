@@ -38,6 +38,8 @@
 
 using namespace std::chrono;
 
+bool resource_prefix = true;
+
 /* globals */
 
 static font_manager_ft manager;

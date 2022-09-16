@@ -190,12 +190,12 @@ tty_cellgrid_impl::tty_cellgrid_impl(font_manager_ft *manager, tty_teletype *tty
     root.add_child(hscroll);
 
     /* fetch our font */
-    mono1_emoji = manager->findFontByPath(mono1_emoji_font_path);
+    mono1_emoji = tty_typeface_get_font(manager, tty_cellgrid_face_emoji);
     mono1_emoji->flags |= font_face_color;
-    mono1_regular = manager->findFontByPath(mono1_regular_font_path);
-    mono1_bold = manager->findFontByPath(mono1_bold_font_path);
-    mono1_condensed_regular = manager->findFontByPath(mono1_condensed_regular_font_path);
-    mono1_condensed_bold = manager->findFontByPath(mono1_condensed_bold_font_path);
+    mono1_regular = tty_typeface_get_font(manager, tty_cellgrid_face_regular);
+    mono1_bold = tty_typeface_get_font(manager, tty_cellgrid_face_bold);
+    mono1_condensed_regular = tty_typeface_get_font(manager, tty_cellgrid_face_condensed_regular);
+    mono1_condensed_bold = tty_typeface_get_font(manager, tty_cellgrid_face_condensed_bold);
 
     fm = tty_typeface_get_metrics(mono1_regular, style.font_size, 'M');
     fmc = tty_typeface_get_metrics(mono1_condensed_regular, style.font_size, 'M');

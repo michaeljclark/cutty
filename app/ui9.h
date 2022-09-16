@@ -4,6 +4,8 @@
 #include <iomanip>
 #include <cmath>
 
+extern bool resource_prefix;
+
 namespace ui9 {
 
 using vec3 = glm::vec3;
@@ -122,8 +124,6 @@ struct Rect
 
 struct Properties
 {
-    static const bool debug = false;
-
     std::map<std::string,std::string> map;
 
     Properties() = default;
@@ -167,7 +167,7 @@ inline void Properties::load_properties(file_ptr rsrc)
         if (eqoffset != std::string::npos) {
             std::string key = trim(line.substr(0, eqoffset));
             std::string val = trim(line.substr(eqoffset+1));
-            Debug("%s \"%s\"=\"%s\"\n", __func__, key.c_str(), val.c_str());
+            //Debug("%s \"%s\"=\"%s\"\n", __func__, key.c_str(), val.c_str());
             map.insert(std::make_pair(key, val));
         } else {
             Error("%s parse error: %s\n", __func__, buf);
@@ -175,8 +175,8 @@ inline void Properties::load_properties(file_ptr rsrc)
     }
     rsrc->close();
 
-    Debug("%s loaded %d properties from %s\n",
-        __func__, size(), rsrc->getBasename().c_str());
+    //Debug("%s loaded %d properties from %s\n",
+    //    __func__, size(), rsrc->getBasename().c_str());
 }
 
 struct Defaults
@@ -348,7 +348,14 @@ inline color Defaults::get_color(std::string qualifier, std::string key, color d
 
 struct Context
 {
-    static const char* getDefaultsPath() { return "shaders/default.properties"; }
+    static const char* getDefaultsPath()
+    {
+        if (resource_prefix) {
+            return "Resources/shaders/default.properties";
+        } else {
+            return "shaders/default.properties";
+        }
+    }
 
     Defaults defaults;
     font_manager *manager;

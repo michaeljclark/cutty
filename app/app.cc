@@ -36,6 +36,12 @@
 
 using namespace std::chrono;
 
+#if defined(__APPLE__)
+bool resource_prefix = false;
+#else
+bool resource_prefix = true;
+#endif
+
 /* globals */
 
 static font_manager_ft manager;
@@ -299,7 +305,7 @@ static void tty_app(int argc, char **argv)
     tty->set_winsize(dim);
     tty->reset();
 
-    int fd = process->exec(dim, exec_path, exec_argv);
+    int fd = process->exec(dim, exec_path, exec_argv, true /* fixme */);
     tty->set_fd(fd);
 
     while (!glfwWindowShouldClose(window)) {

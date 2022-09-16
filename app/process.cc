@@ -6,9 +6,11 @@
 #include <time.h>
 #include <poll.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <termios.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>
 
 #if defined(__linux__)
 #include <pty.h>
@@ -33,7 +35,7 @@ tty_process* tty_process_new()
     return new tty_process{};
 }
 
-int tty_process::exec(tty_winsize zws, const char *path, const char *const argv[])
+int tty_process::exec(tty_winsize zws, const char *path, const char *const argv[], bool go_home)
 {
     struct winsize ws;
     struct termios tio;
@@ -76,14 +78,45 @@ int tty_process::exec(tty_winsize zws, const char *path, const char *const argv[
     cfsetispeed(&tio, B9600);
     cfsetospeed(&tio, B9600);
 
+    int cwd;
+    char *home;
+
+    /* save working directory and change to home directory */
+    if (go_home) {
+        if ((cwd = open(".", O_RDONLY)) < 0) {
+            Error("tty_process::forkpty: open: %s\n", strerror(errno));
+            return -1;
+        }
+        if ((home = getenv("HOME")) == NULL) {
+            Error("tty_process::forkpty: getenv: HOME not found\n");
+            return -1;
+        }
+        if (chdir(home) < 0) {
+            Error("tty_process::forkpty: chdir: %s\n", strerror(errno));
+            return -1;
+        }
+    }
+
     switch ((pid = ::forkpty((int*)&fd, device, &tio, &ws))) {
     case -1:
-        Error("tty_process::forkpty: forkpty: %s", strerror(errno));
+        Error("tty_process::forkpty: forkpty: %s\n", strerror(errno));
     case 0:
         setenv("TERM", "xterm-256color", 1);
         setenv("LC_CTYPE", "UTF-8", 0);
         execvp(path, (char *const *)argv);
         _exit(1);
+    }
+
+    /* restore previous working directory */
+    if (go_home) {
+        if (fchdir(cwd) < 0) {
+            Error("tty_process::forkpty: fchdir: %s\n", strerror(errno));
+            return -1;
+        }
+        if (close(cwd) < 0) {
+            Error("tty_process::forkpty: close: %s\n", strerror(errno));
+            return -1;
+        }
     }
 
     Debug("tty_process::forkpty: pid=%d path=%s argv0=%s fd=%d rows=%d cols=%d device=%s\n",

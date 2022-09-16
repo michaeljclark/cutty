@@ -175,11 +175,43 @@ set(cutty_sources
     app/typeface.cc)
 
 include_directories(app)
-add_executable(terminal app/app.cc ${cutty_sources})
-target_link_libraries(terminal ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
-target_compile_definitions(terminal PRIVATE -DHAVE_GLAD)
+if(APPLE)
+  file(GLOB_RECURSE font_bundle
+    Resources/fonts/NotoColorEmoji.ttf
+    Resources/fonts/NotoSansMono-Regular.ttf
+    Resources/fonts/NotoSansMono-Bold.ttf
+    Resources/fonts/NotoSansMono_ExtraCondensed-Regular.ttf
+    Resources/fonts/NotoSansMono_ExtraCondensed-Bold.ttf)
+  file(GLOB_RECURSE shader_bundle
+    Resources/shaders/*.fsh
+    Resources/shaders/*.vsh
+    Resources/shaders/*.properties)
+  set(cutty_bundle ${shader_bundle})
+  foreach(font_file ${font_bundle})
+    list(APPEND cutty_bundle ${font_file})
+  endforeach()
+  foreach(rsrc_file ${cutty_bundle})
+        get_filename_component(rsrc_file_path ${rsrc_file} PATH)
+        file(RELATIVE_PATH rsrc_file_dir ${CMAKE_CURRENT_SOURCE_DIR} ${rsrc_file_path})
+        set_source_files_properties( ${rsrc_file} PROPERTIES MACOSX_PACKAGE_LOCATION ${rsrc_file_dir})
+  endforeach(rsrc_file)
+  add_executable(cutty MACOSX_BUNDLE app/app.cc ${cutty_sources} ${cutty_bundle})
+  set_target_properties(cutty PROPERTIES
+    BUNDLE True
+    RESOURCE "${cutty_resources}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER org.cutty
+    MACOSX_BUNDLE_BUNDLE_NAME cutty
+    MACOSX_BUNDLE_BUNDLE_VERSION "0.1"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1"
+    MACOSX_BUNDLE_COPYRIGHT "Copyright © 2022 Cutty contributors. All rights reserved."
+  )
+else()
+  add_executable(cutty app/app.cc ${cutty_sources})
+endif()
+target_link_libraries(cutty ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${GLAD_LIBRARIES} ${UTIL_LIBS} glfw)
+target_compile_definitions(cutty PRIVATE -DHAVE_GLAD)
 if(WIN32)
-  set_property(TARGET terminal PROPERTY WIN32_EXECUTABLE TRUE)
+  set_property(TARGET cutty PROPERTY WIN32_EXECUTABLE TRUE)
 endif()
 
 #
@@ -222,7 +254,7 @@ find_program(TESSERACT_BINARY tesseract)
 
 # build capture test program
 if (OSMESA_LDFLAGS AND TESSERACT_BINARY)
-add_executable(capture util/capture.cc ${cutty_sources})
+add_executable(capture app/capture.cc ${cutty_sources})
 target_include_directories(capture PUBLIC ${OSMESA_INCLUDE})
 target_compile_definitions(capture PUBLIC USE_OSMESA=1)
 target_link_libraries(capture ${GLYB_LIBS} ${CMAKE_DL_LIBS} ${UTIL_LIBS} ${OSMESA_LDFLAGS} ${OSMESA_LIBS})

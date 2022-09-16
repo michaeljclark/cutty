@@ -38,11 +38,29 @@
 #include FT_GLYPH_H
 #include FT_OUTLINE_H
 
-const char *mono1_emoji_font_path = "fonts/NotoColorEmoji.ttf";
-const char *mono1_regular_font_path = "fonts/NotoSansMono-Regular.ttf";
-const char *mono1_bold_font_path = "fonts/NotoSansMono-Bold.ttf";
-const char *mono1_condensed_regular_font_path = "fonts/NotoSansMono_ExtraCondensed-Regular.ttf";
-const char *mono1_condensed_bold_font_path = "fonts/NotoSansMono_ExtraCondensed-Bold.ttf";
+extern bool resource_prefix;
+
+font_face* tty_typeface_get_font(font_manager_ft *manager, tty_cellgrid_face face)
+{
+    if (resource_prefix) {
+        switch (face) {
+        case tty_cellgrid_face_emoji: return  manager->findFontByPath("Resources/fonts/NotoColorEmoji.ttf");
+        case tty_cellgrid_face_regular: return manager->findFontByPath("Resources/fonts/NotoSansMono-Regular.ttf");
+        case tty_cellgrid_face_bold: return manager->findFontByPath("Resources/fonts/NotoSansMono-Bold.ttf");
+        case tty_cellgrid_face_condensed_regular: return manager->findFontByPath("Resources/fonts/NotoSansMono_ExtraCondensed-Regular.ttf");
+        case tty_cellgrid_face_condensed_bold: manager->findFontByPath("Resources/fonts/NotoSansMono_ExtraCondensed-Bold.ttf");
+        }
+    } else {
+        switch (face) {
+        case tty_cellgrid_face_emoji: return manager->findFontByPath("fonts/NotoColorEmoji.ttf");
+        case tty_cellgrid_face_regular: return manager->findFontByPath("fonts/NotoSansMono-Regular.ttf");
+        case tty_cellgrid_face_bold: return manager->findFontByPath("fonts/NotoSansMono-Bold.ttf");
+        case tty_cellgrid_face_condensed_regular: return manager->findFontByPath("fonts/NotoSansMono_ExtraCondensed-Regular.ttf");
+        case tty_cellgrid_face_condensed_bold: manager->findFontByPath("fonts/NotoSansMono_ExtraCondensed-Bold.ttf");
+        }
+    }
+    return nullptr;
+}
 
 uint tty_typeface_lookup_glyph(font_face *face, uint codepoint)
 {

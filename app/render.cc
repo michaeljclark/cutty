@@ -37,6 +37,8 @@
 
 using namespace std::chrono;
 
+extern bool resource_prefix;
+
 struct circular_buffer
 {
     llong sum;
@@ -276,11 +278,19 @@ void tty_render_opengl::initialize()
     };
 
     /* shader program */
-    vsh = compile_shader(GL_VERTEX_SHADER, "shaders/simple.vsh");
-    flat_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/flat.fsh");
-    texture_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/texture.fsh");
-    msdf_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/msdf.fsh");
-    canvas_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/canvas.fsh");
+    if (resource_prefix) {
+        vsh = compile_shader(GL_VERTEX_SHADER, "Resources/shaders/simple.vsh");
+        flat_fsh = compile_shader(GL_FRAGMENT_SHADER, "Resources/shaders/flat.fsh");
+        texture_fsh = compile_shader(GL_FRAGMENT_SHADER, "Resources/shaders/texture.fsh");
+        msdf_fsh = compile_shader(GL_FRAGMENT_SHADER, "Resources/shaders/msdf.fsh");
+        canvas_fsh = compile_shader(GL_FRAGMENT_SHADER, "Resources/shaders/canvas.fsh");
+    } else {
+        vsh = compile_shader(GL_VERTEX_SHADER, "shaders/simple.vsh");
+        flat_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/flat.fsh");
+        texture_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/texture.fsh");
+        msdf_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/msdf.fsh");
+        canvas_fsh = compile_shader(GL_FRAGMENT_SHADER, "shaders/canvas.fsh");
+    }
     link_program(&prog_flat, vsh, flat_fsh, attrs);
     link_program(&prog_texture, vsh, texture_fsh, attrs);
     link_program(&prog_msdf, vsh, msdf_fsh, attrs);
