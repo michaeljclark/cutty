@@ -15,6 +15,40 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
 # compiler flags
 #
 
+option(TTY_ENABLE_ASAN "Enable ASAN" OFF)
+option(TTY_ENABLE_MSAN "Enable MSAN" OFF)
+option(TTY_ENABLE_TSAN "Enable TSAN" OFF)
+option(TTY_ENABLE_UBSAN "Enable UBSAN" OFF)
+
+macro(add_compiler_flag)
+   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ARGN}")
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ARGN}")
+endmacro(add_compiler_flag)
+
+macro(add_linker_flag)
+  set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} ${ARGN}")
+endmacro(add_linker_flag)
+
+if (TTY_ENABLE_ASAN)
+  add_compiler_flag(-fsanitize=address)
+  add_linker_flag(-fsanitize=address)
+endif()
+
+if(TTY_ENABLE_MSAN)
+  add_compiler_flag(-fsanitize=memory)
+  add_linker_flag(-fsanitize=memory)
+endif()
+
+if(TTY_ENABLE_TSAN)
+  add_compiler_flag("-fPIE -fsanitize=thread")
+  add_linker_flag("-fPIE -fsanitize=thread")
+endif()
+
+if(TTY_ENABLE_UBSAN)
+  add_compiler_flag(-fsanitize=undefined)
+  add_linker_flag(-fsanitize=undefined)
+endif()
+
 include(CheckCXXCompilerFlag)
 include(CheckSymbolExists)
 
