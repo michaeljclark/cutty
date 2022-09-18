@@ -30,6 +30,7 @@
 
 #include "timestamp.h"
 #include "teletype.h"
+#include "translate.h"
 #include "process.h"
 #include "cellgrid.h"
 #include "render.h"
@@ -75,6 +76,17 @@ static void init_cursors()
     for (size_t i = 0; i < array_size(cursor_names); i++) {
         cursor_objects[i] = glfwCreateStandardCursor(cursor_names[i]);
     }
+}
+
+static void init_keymap()
+{
+    std::vector<char> input_map;
+    if (resource_prefix) {
+        input_map = load_file("Resources/settings/input.map");
+    } else {
+        input_map = load_file("settings/input.map");
+    }
+    tty_keymap_init(input_map);
 }
 
 void app_set_cursor(app_cursor cursor)
@@ -297,6 +309,7 @@ static void tty_app(int argc, char **argv)
     float scale = sqrtf((float)(framebuffer_width * framebuffer_height) /
                        (float)(window_width * window_height));
 
+    init_keymap();
     init_cursors();
     render->initialize();
 

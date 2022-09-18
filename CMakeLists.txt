@@ -206,6 +206,7 @@ set(cutty_sources
     app/render.cc
     app/teletype.cc
     app/timestamp.cc
+    app/translate.cc
     app/typeface.cc)
 
 include_directories(app)
@@ -220,7 +221,9 @@ if(APPLE)
     Resources/shaders/*.fsh
     Resources/shaders/*.vsh
     Resources/shaders/*.properties)
-  set(cutty_bundle ${shader_bundle})
+  file(GLOB_RECURSE settings_bundle
+    Resources/settings/*.map)
+  set(cutty_bundle ${shader_bundle} ${settings_bundle})
   foreach(font_file ${font_bundle})
     list(APPEND cutty_bundle ${font_file})
   endforeach()

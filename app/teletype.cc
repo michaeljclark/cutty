@@ -13,6 +13,7 @@
 
 #include "timestamp.h"
 #include "teletype.h"
+#include "translate.h"
 #include "process.h"
 
 static int io_buffer_size = 65536;
@@ -52,6 +53,76 @@ static const char* ctrl_code[32] = {
     "GS",  // ^] - Group Separator
     "RS",  // ^^ - Record Separator
     "US",  // ^_ - Unit Separator
+};
+
+static std::string control_string(std::string s)
+{
+    enum char_class { c_none, c_ctrl, c_ascii, c_hex };
+
+    auto classify = [] (int c) -> char_class {
+        if (c < 32) return c_ctrl;
+        else if (c < 127) return c_ascii;
+        else return c_hex;
+    };
+    auto code = [] (int c) -> std::string {
+        if (c < 32) return std::string(ctrl_code[c]);
+        else return std::string("?");
+    };
+    auto text = [] (int c) -> std::string {
+        if (c == '"') return std::string("\\\"");
+        else return std::string(1, c);
+    };
+    auto hex = [](int c) -> std::string {
+        char hex[8];
+        snprintf(hex, sizeof(hex), "#%02x", c & 0xff);
+        return hex;
+    };
+
+    std::string out;
+    int l = 0, c;
+    char_class lc = c_none, cc;
+
+    for (size_t i = 0; i < s.size(); i++) {
+        c = (unsigned char)s[i];
+        cc = classify(c);
+        if (cc == c_ascii && (out.size() == 0 || lc != c_ascii)) {
+            out.append("\"");
+        }
+        if (cc != c_ascii && out.size() > 0) out.append(" ");
+        switch (cc) {
+        case c_none: break;
+        case c_ctrl: out.append(code(c)); break;
+        case c_ascii: out.append(text(c)); break;
+        case c_hex: out.append(hex(c)); break;
+        }
+        l = c;
+        lc = cc;
+    }
+    if (lc == c_ascii) out.append("\"");
+
+    return out;
+}
+
+struct tty_private_mode_rec
+{
+    uint code;
+    uint flag;
+    const char *name;
+};
+
+static tty_private_mode_rec dec_flags[] = {
+    {    1, tty_flag_DECCKM,     "app_cursor_keys"        },
+    {    7, tty_flag_DECAWM,     "auto_wrap"              },
+    {   12, tty_flag_ATTBC,      "blinking_cursor"        },
+    {   25, tty_flag_DECTCEM,    "cursor_enable"          },
+    { 1034, tty_flag_XT8BM,      "eight_bit_mode"         },
+    { 1047, tty_flag_XTAS,       "alt_screen"             },
+    { 1048, tty_flag_XTSC,       "save_cursor"            },
+    { 1049, tty_flag_XTAS |
+            tty_flag_XTSC,       "save_cursor_alt_screen" },
+    { 2004, tty_flag_XTBP,       "bracketed_paste"        },
+    { 7000, tty_flag_DECBKM,     "backarrow_sends_delete" },
+    { 7001, tty_flag_DECAKM,     "alt_keypad_mode"        }
 };
 
 typedef struct { ushort d[3]; } tty_int48;
@@ -170,9 +241,8 @@ struct tty_teletype_impl : tty_teletype
     virtual void reset();
     virtual ssize_t io();
     virtual ssize_t proc();
-    virtual ssize_t write(const char *buf, size_t len);
-    virtual bool special_ckm(int key, int mods);
-    virtual bool special_key(int key, int mods);
+    virtual ssize_t emit(const char *buf, size_t len);
+    virtual void emit_loop(const char *buf, size_t len);
     virtual bool keyboard(int key, int scancode, int action, int mods);
 
 protected:
@@ -208,12 +278,11 @@ protected:
     void csi_dsr();
     void csi(uint c);
     void absorb(uint c);
-    static int keycode_to_char(int key, int mods);
 };
 
 tty_teletype_impl::tty_teletype_impl() :
     state(tty_state_normal),
-    flags(tty_flag_DECAWM | tty_flag_DECTCEM),
+    flags(tty_flag_DECAWM | tty_flag_DECTCEM | tty_flag_DECBKM),
     charset(tty_charset_utf8),
     code(0),
     argc(0),
@@ -317,7 +386,7 @@ void tty_teletype_impl::send(uint c)
 {
     Trace("send: %s\n", char_str(c).c_str());
     char b = (char)c;
-    write(&b, 1);
+    emit(&b, 1);
 }
 
 /*
@@ -963,20 +1032,6 @@ void tty_teletype_impl::osc_string(uint c)
         args_str().c_str(), char_str(c).c_str(), osc_data.c_str());
 }
 
-struct tty_private_mode_rec
-{
-    uint code;
-    uint flag;
-    const char *name;
-    const char *desc;
-};
-
-static tty_private_mode_rec dec_flags[] = {
-    {  1, tty_flag_DECCKM,  "DECCKM",  "DEC Cursor Key Mode" },
-    {  7, tty_flag_DECAWM,  "DECAWM",  "DEC Auto Wrap Mode" },
-    { 25, tty_flag_DECTCEM, "DECTCEM", "DEC Text Cursor Enable Mode" },
-};
-
 static tty_private_mode_rec* tty_lookup_private_mode_rec(uint code)
 {
     for (size_t i = 0; i < array_size(dec_flags); i++) {
@@ -992,8 +1047,8 @@ void tty_teletype_impl::csi_private_mode(uint code, uint set)
         Debug("csi_private_mode: %s flag %d: unimplemented\n",
             set ? "set" : "clear", code);
     } else {
-        Debug("csi_private_mode: %s flag %d: %s /* %s */\n",
-            set ? "set" : "clear", code, rec->name, rec->desc);
+        Debug("csi_private_mode: %s flag %d: %s\n",
+            set ? "set" : "clear", code, rec->name);
         if (set) {
             flags |= rec->flag;
         } else {
@@ -1038,7 +1093,7 @@ void tty_teletype_impl::csi_dsr()
         llong row = cur_row - (hist.lines.size() - vis_lines) + 1;
         row = std::max(1ll, std::min(row, vis_lines));
         int len = snprintf(buf, sizeof(buf), "\x1b[%llu;%lluR", row, col);
-        write(buf, len);
+        emit(buf, len);
         break;
     }
     default:
@@ -1551,7 +1606,7 @@ ssize_t tty_teletype_impl::io()
             count = out_end - out_start;
         }
         if (count > 0) {
-            if ((len = ::write(fd, &out_buf[out_start], count)) < 0) {
+            if ((len = write(fd, &out_buf[out_start], count)) < 0) {
                 Panic("write failed: %s\n", strerror(errno));
             }
             Debug("io: wrote %zu bytes -> pty\n", len);
@@ -1617,7 +1672,7 @@ ssize_t tty_teletype_impl::proc()
     return count;
 }
 
-ssize_t tty_teletype_impl::write(const char *buf, size_t len)
+ssize_t tty_teletype_impl::emit(const char *buf, size_t len)
 {
     ssize_t count, ncopy = 0;
     if (out_start > out_end) {
@@ -1641,156 +1696,77 @@ ssize_t tty_teletype_impl::write(const char *buf, size_t len)
     return ncopy;
 }
 
-int tty_teletype_impl::keycode_to_char(int key, int mods)
+void tty_teletype_impl::emit_loop(const char *buf, size_t len)
 {
-    // We convert simple Ctrl and Shift modifiers into ASCII
-    if (key >= GLFW_KEY_SPACE && key <= GLFW_KEY_EQUAL) {
-        if (mods == 0) {
-            return key - GLFW_KEY_SPACE + ' ';
+    size_t nbytes = 0, off = 0;
+    do {
+        if ((nbytes = emit(buf + off, len - off)) < 0) {
+            Error("tty_teletype_impl::emit: %s\n", strerror(errno));
+            return;
         }
-    }
-    if (key >= GLFW_KEY_A && key <= GLFW_KEY_Z) {
-        // convert Ctrl+<Key> into its ASCII control code
-        if (mods == GLFW_MOD_CONTROL) {
-            return key - GLFW_KEY_A + 1;
-        }
-        // convert Shift <Key> into ASCII
-        if (mods == GLFW_MOD_SHIFT) {
-            return key - GLFW_KEY_A + 'A';
-        }
-        // convert plain <Key> into ASCII
-        if (mods == 0) {
-            return key - GLFW_KEY_A + 'a';
-        }
-    }
-    if (key >= GLFW_KEY_LEFT_BRACKET && key < GLFW_KEY_GRAVE_ACCENT) {
-        // convert plain <Key> into ASCII
-        if (mods == GLFW_MOD_SHIFT) {
-            return key - GLFW_KEY_LEFT_BRACKET + '{';
-        }
-        if (mods == 0) {
-            return key - GLFW_KEY_LEFT_BRACKET + '[';
-        }
-    }
-    // convert Shift <Key> for miscellaneous characters
-    if (mods == GLFW_MOD_SHIFT) {
-        switch (key) {
-        case GLFW_KEY_0:          /* ' */ return ')';
-        case GLFW_KEY_1:          /* ' */ return '!';
-        case GLFW_KEY_2:          /* ' */ return '@';
-        case GLFW_KEY_3:          /* ' */ return '#';
-        case GLFW_KEY_4:          /* ' */ return '$';
-        case GLFW_KEY_5:          /* ' */ return '%';
-        case GLFW_KEY_6:          /* ' */ return '^';
-        case GLFW_KEY_7:          /* ' */ return '&';
-        case GLFW_KEY_8:          /* ' */ return '*';
-        case GLFW_KEY_9:          /* ' */ return '(';
-        case GLFW_KEY_APOSTROPHE: /* ' */ return '"';
-        case GLFW_KEY_COMMA:      /* , */ return '<';
-        case GLFW_KEY_MINUS:      /* - */ return '_';
-        case GLFW_KEY_PERIOD:     /* . */ return '>';
-        case GLFW_KEY_SLASH:      /* / */ return '?';
-        case GLFW_KEY_SEMICOLON:  /* ; */ return ':';
-        case GLFW_KEY_EQUAL:      /* = */ return '+';
-        case GLFW_KEY_GRAVE_ACCENT: /* ` */ return '~';
-        }
-    }
-    return 0;
+    } while (nbytes > 0 && (off += nbytes) < len);
 }
 
-bool tty_teletype_impl::special_ckm(int key, int mods)
+static std::string keypress_string(tty_keypress kp)
 {
-    if (mods) return false;
-    switch (key) {
-    case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
-    case GLFW_KEY_ENTER: send(tty_char_LF); break;
-    case GLFW_KEY_TAB: send(tty_char_HT); break;
-    case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
-    case GLFW_KEY_INSERT: write("\x1b[2~", 4); break;
-    case GLFW_KEY_DELETE: write("\x1b[3~", 4); break;
-    case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break;
-    case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break;
-    case GLFW_KEY_UP: write("\x1bOA", 3); break;
-    case GLFW_KEY_DOWN: write("\x1bOB", 3); break;
-    case GLFW_KEY_RIGHT: write("\x1bOC", 3); break;
-    case GLFW_KEY_LEFT: write("\x1bOD", 3); break;
-    case GLFW_KEY_HOME: write("\x1bOH", 3); break;
-    case GLFW_KEY_END: write("\x1bOF", 3); break;
-    case GLFW_KEY_F1: write("\x1bOP", 3); break;
-    case GLFW_KEY_F2: write("\x1bOQ", 3); break;
-    case GLFW_KEY_F3: write("\x1bOR", 3); break;
-    case GLFW_KEY_F4: write("\x1bOS", 3); break;
-    case GLFW_KEY_F5: write("\x1b[15~", 5); break;
-    case GLFW_KEY_F6: write("\x1b[17~", 5); break;
-    case GLFW_KEY_F7: write("\x1b[18~", 5); break;
-    case GLFW_KEY_F8: write("\x1b[19~", 5); break;
-    case GLFW_KEY_F9: write("\x1b[20~", 5); break;
-    case GLFW_KEY_F10: write("\x1b[21~", 5); break;
-    case GLFW_KEY_F11: write("\x1b[23~", 5); break;
-    case GLFW_KEY_F12: write("\x1b[24~", 5); break;
-    default: return false;
-    }
-    return true;
+    std::string s;
+
+    int mod, mods = kp.mods;
+    do {
+        if ((mod = mods & -mods)) {
+            s.append(tty_keymap_mod_name(mod));
+            s.append(" + ");
+        }
+    } while ((mods &= ~mod));
+    s.append(tty_keymap_key_name(kp.key));
+
+    return s;
 }
 
-bool tty_teletype_impl::special_key(int key, int mods)
+static std::string translate_string(tty_translate_result r)
 {
-    if (mods) return false;
-    switch (key) {
-    case GLFW_KEY_ESCAPE: send(tty_char_ESC); break;
-    case GLFW_KEY_ENTER: send(tty_char_LF); break;
-    case GLFW_KEY_TAB: send(tty_char_HT); break;
-    case GLFW_KEY_BACKSPACE: send(tty_char_BS); break;
-    case GLFW_KEY_INSERT: write("\x1b[2~", 4); break;
-    case GLFW_KEY_DELETE: write("\x1b[3~", 4); break;
-    case GLFW_KEY_PAGE_UP: write("\x1b[5~", 4); break;
-    case GLFW_KEY_PAGE_DOWN: write("\x1b[6~", 4); break;
-    case GLFW_KEY_UP: write("\x1b[A", 3); break;
-    case GLFW_KEY_DOWN: write("\x1b[B", 3); break;
-    case GLFW_KEY_RIGHT: write("\x1b[C", 3); break;
-    case GLFW_KEY_LEFT: write("\x1b[D", 3); break;
-    case GLFW_KEY_HOME: write("\x1b[H", 3); break;
-    case GLFW_KEY_END: write("\x1b[F", 3); break;
-    case GLFW_KEY_F1: write("\x1b[11~", 5); break;
-    case GLFW_KEY_F2: write("\x1b[12~", 5); break;
-    case GLFW_KEY_F3: write("\x1b[13~", 5); break;
-    case GLFW_KEY_F4: write("\x1b[14~", 5); break;
-    case GLFW_KEY_F5: write("\x1b[15~", 5); break;
-    case GLFW_KEY_F6: write("\x1b[17~", 5); break;
-    case GLFW_KEY_F7: write("\x1b[18~", 5); break;
-    case GLFW_KEY_F8: write("\x1b[19~", 5); break;
-    case GLFW_KEY_F9: write("\x1b[20~", 5); break;
-    case GLFW_KEY_F10: write("\x1b[21~", 5); break;
-    case GLFW_KEY_F11: write("\x1b[23~", 5); break;
-    case GLFW_KEY_F12: write("\x1b[24~", 5); break;
-    default: return false;
+    std::string out;
+
+    switch(r.oper) {
+    case tty_oper_none:
+        return std::string("none");
+    case tty_oper_emit:
+        return std::string("emit ") + control_string(r.data);
+    case tty_oper_copy:
+        return std::string("copy");
+    case tty_oper_paste:
+        return std::string("paste");
     }
-    return true;
+
+    return "invalid";
 }
 
 bool tty_teletype_impl::keyboard(int key, int scancode, int action, int mods)
 {
-    // GLFW_MOD_ALT   = PC-Alt, MAC-Opt
-    // GLFW_MOD_SUPER = PC-Win, MAC-Cmd
-    int c;
     switch (action) {
     case GLFW_PRESS:
     case GLFW_REPEAT:
-        if ((c = keycode_to_char(key, mods))) {
-            send(c);
+        std::vector<tty_keypress> seq = { tty_keypress{ key, mods } };
+        tty_translate_result r = tty_keymap_translate(seq, flags);
+        if (r.oper == tty_oper_none) break;
+
+        Trace("keyboard: translate %s -> %s\n",
+            keypress_string(seq[0]).c_str(), translate_string(r).c_str());
+
+        const char *str;
+        switch (r.oper) {
+        case tty_oper_emit:
+            emit(r.data.c_str(), r.data.size());
             return true;
-        } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_C) {
+        case tty_oper_copy:
             app_set_clipboard(get_selected_text().c_str());
-            /* return false so that scroll is not modified for copies */
             return false;
-        } else if (mods == GLFW_MOD_ALT && key == GLFW_KEY_V) {
-            const char *str = app_get_clipboard();
-            write(str, strlen(str));
+        case tty_oper_paste:
+            str = app_get_clipboard();
+            if (has_flag(tty_flag_XTBP)) emit("\x1b[201~", 6);
+            emit_loop(str, strlen(str));
+            if (has_flag(tty_flag_XTBP)) emit("\x1b[200~", 6);
             return true;
-        } else if ((flags & tty_flag_DECCKM) > 0) {
-            return special_ckm(key, mods);
-        } else {
-            return special_key(key, mods);
         }
         break;
     }

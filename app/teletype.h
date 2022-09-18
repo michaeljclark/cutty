@@ -117,6 +117,7 @@ enum tty_char
     tty_char_GS  = 0x1D, // ^] - Group Separator
     tty_char_RS  = 0x1E, // ^^ - Record Separator
     tty_char_US  = 0x1F, // ^_ - Unit Separator
+    tty_char_DEL = 0x7F, // ^? - Delete
 };
 
 enum tty_clear
@@ -146,9 +147,16 @@ enum tty_state
 
 enum tty_flag
 {
-    tty_flag_DECCKM          = 1 << 0,
-    tty_flag_DECAWM          = 1 << 1,
-    tty_flag_DECTCEM         = 1 << 2
+    tty_flag_DECCKM   = (1 << 0),   // [X] DEC Cursor Key Mode
+    tty_flag_DECAWM   = (1 << 1),   // [X] DEC Auto Wrap Mode
+    tty_flag_DECTCEM  = (1 << 2),   // [X] DEC Text Cursor Enable Mode
+    tty_flag_DECAKM   = (1 << 3),   // [ ] DEC Alternate Keypad Mode
+    tty_flag_DECBKM   = (1 << 4),   // [X] DEC Backarrow Sends Delete Mode
+    tty_flag_ATTBC    = (1 << 5),   // [ ] AT&T Blinking Cursor
+    tty_flag_XT8BM    = (1 << 6),   // [ ] XTerm 8-Bit Mode
+    tty_flag_XTAS     = (1 << 7),   // [ ] XTerm Alt Screen
+    tty_flag_XTSC     = (1 << 8),   // [ ] XTerm Save Cursor
+    tty_flag_XTBP     = (1 << 9),   // [X] XTerm Bracketed Paste
 };
 
 enum tty_col
@@ -215,7 +223,7 @@ struct tty_teletype
     virtual void reset() = 0;
     virtual ssize_t io() = 0;
     virtual ssize_t proc() = 0;
-    virtual ssize_t write(const char *buf, size_t len) = 0;
+    virtual ssize_t emit(const char *buf, size_t len) = 0;
     virtual bool keyboard(int key, int scancode, int action, int mods) = 0;
 };
 
