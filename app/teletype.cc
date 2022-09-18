@@ -103,6 +103,7 @@ struct tty_line_store
     llong count_cells(llong lline);
     void clear_line(llong lline);
     void invalidate_cache();
+    void dump_stats();
 
     tty_line_store();
 };
@@ -460,6 +461,43 @@ void tty_line_store::invalidate_cache()
             cache[cl].lline = tty_int48_set(-1);
         }
     }
+}
+
+void tty_line_store::dump_stats()
+{
+    size_t cache_cells = 0;
+    for (size_t i = 0; i < line_cache_size; i++) {
+        cache_cells += cache[i].ldata.cells.size();
+    }
+    Info("=] stats [=============================================\n");
+    Info("tty_line_store.cache.lines = %9zu x %2zu (%9zu)\n",
+        cache.size(), sizeof(tty_cached_line),
+        cache.size() * sizeof(tty_cached_line));
+    Info("tty_line_store.cache.cells = %9zu x %2zu (%9zu)\n",
+        cache_cells, sizeof(tty_cell),
+        cache_cells * sizeof(tty_cell));
+    Info("tty_line_store.voffsets    = %9zu x %2zu (%9zu)\n",
+        voffsets.size(), sizeof(tty_packed_voff),
+        voffsets.size() * sizeof(tty_packed_voff));
+    Info("tty_line_store.loffsets    = %9zu x %2zu (%9zu)\n",
+        loffsets.size(), sizeof(tty_packed_loff),
+        loffsets.size() * sizeof(tty_packed_loff));
+    Info("tty_line_store.pack.lines  = %9zu x %2zu (%9zu)\n",
+        lines.size(), sizeof(tty_packed_line),
+        lines.size() * sizeof(tty_packed_line));
+    Info("tty_line_store.pack.cells  = %9zu x %2zu (%9zu)\n",
+        cells.size(), sizeof(tty_cell), cells.size() * sizeof(tty_cell));
+    Info("tty_line_store.pack.text   = %9zu x %2zu (%9zu)\n",
+        text.size(), sizeof(char), text.size() * sizeof(char));
+    size_t total = cache.size() * sizeof(tty_cached_line)
+                 + cache_cells * sizeof(tty_cell)
+                 + voffsets.size() * sizeof(tty_packed_voff)
+                 + loffsets.size() * sizeof(tty_packed_loff)
+                 + lines.size() * sizeof(tty_packed_line)
+                 + cells.size() * sizeof(tty_cell)
+                 + text.size() * sizeof(char);
+    Info("-------------------------------------------------------\n");
+    Info("tty_line_store.total       = %14s (%9zu)\n", "", total);
 }
 
 void tty_teletype_impl::update_offsets()
@@ -915,34 +953,7 @@ void tty_teletype_impl::osc(uint c)
         Debug("osc: screen-capture\n");
         set_needs_capture();
     } else if (argc == 1 && argv[0] == 556) {
-        size_t cache_cells = 0;
-        for (size_t i = 0; i < line_cache_size; i++) {
-            cache_cells += hist.cache[i].ldata.cells.size();
-        }
-        printf("=] stats [=============================================\n");
-        printf("tty_line_store.cache.lines = %9zu x %2zu (%9zu)\n",
-            hist.cache.size(), sizeof(tty_cached_line), hist.cache.size() * sizeof(tty_cached_line));
-        printf("tty_line_store.cache.cells = %9zu x %2zu (%9zu)\n",
-            cache_cells, sizeof(tty_cell), cache_cells * sizeof(tty_cell));
-        printf("tty_line_store.voffsets    = %9zu x %2zu (%9zu)\n",
-            hist.voffsets.size(), sizeof(tty_packed_voff), hist.voffsets.size() * sizeof(tty_packed_voff));
-        printf("tty_line_store.loffsets    = %9zu x %2zu (%9zu)\n",
-            hist.loffsets.size(), sizeof(tty_packed_loff), hist.loffsets.size() * sizeof(tty_packed_loff));
-        printf("tty_line_store.pack.lines  = %9zu x %2zu (%9zu)\n",
-            hist.lines.size(), sizeof(tty_packed_line), hist.lines.size() * sizeof(tty_packed_line));
-        printf("tty_line_store.pack.cells  = %9zu x %2zu (%9zu)\n",
-            hist.cells.size(), sizeof(tty_cell), hist.cells.size() * sizeof(tty_cell));
-        printf("tty_line_store.pack.text   = %9zu x %2zu (%9zu)\n",
-            hist.text.size(), sizeof(char), hist.text.size() * sizeof(char));
-        size_t total = hist.cache.size() * sizeof(tty_cached_line)
-                     + cache_cells * sizeof(tty_cell)
-                     + hist.voffsets.size() * sizeof(tty_packed_voff)
-                     + hist.loffsets.size() * sizeof(tty_packed_loff)
-                     + hist.lines.size() * sizeof(tty_packed_line)
-                     + hist.cells.size() * sizeof(tty_cell)
-                     + hist.text.size() * sizeof(char);
-        printf("-------------------------------------------------------\n");
-        printf("tty_line_store.total       = %14s (%9zu)\n", "", total);
+        hist.dump_stats();
     }
 }
 
