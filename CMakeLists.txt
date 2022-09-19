@@ -193,9 +193,13 @@ if(APPLE)
   foreach(rsrc_file ${cutty_bundle})
         get_filename_component(rsrc_file_path ${rsrc_file} PATH)
         file(RELATIVE_PATH rsrc_file_dir ${CMAKE_CURRENT_SOURCE_DIR} ${rsrc_file_path})
-        set_source_files_properties( ${rsrc_file} PROPERTIES MACOSX_PACKAGE_LOCATION ${rsrc_file_dir})
+        set_source_files_properties(${rsrc_file} PROPERTIES MACOSX_PACKAGE_LOCATION ${rsrc_file_dir})
   endforeach(rsrc_file)
-  add_executable(cutty MACOSX_BUNDLE app/app.cc ${cutty_sources} ${cutty_bundle})
+  set(cutty_icon Resources/images/cutty.icns)
+  set(MACOSX_BUNDLE_ICON_FILE images/cutty.icns)
+  set_source_files_properties(${cutty_icon} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/images)
+  add_executable(cutty MACOSX_BUNDLE app/app.cc ${cutty_sources} ${cutty_bundle} ${cutty_icon})
+
   set_target_properties(cutty PROPERTIES
     BUNDLE True
     RESOURCE "${cutty_resources}"
