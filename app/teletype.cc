@@ -1990,7 +1990,9 @@ restart:
             state = tty_state_normal;
             break;
         default:
-            Debug("absorb: invalid OSC char '%c' (0x%02x)\n", c, c);
+            state = tty_state_osc_string;
+            osc_data.clear();
+            osc_data.append(std::string(1, c));
             break;
         }
         break;
