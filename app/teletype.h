@@ -202,8 +202,6 @@ struct tty_teletype
     virtual void close() = 0;
     virtual bool get_needs_update() = 0;
     virtual void set_needs_update() = 0;
-    virtual bool get_needs_capture() = 0;
-    virtual void set_needs_capture() = 0;
     virtual void update_offsets() = 0;
     virtual tty_log_loc visible_to_logical(llong vrow) = 0;
     virtual tty_vis_loc logical_to_visible(llong lline) = 0;

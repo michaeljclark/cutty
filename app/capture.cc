@@ -129,11 +129,12 @@ static void capture_app(int argc, char **argv)
         render->update();
         render->display();
         glFlush();
-        if (tty->get_needs_capture()) {
+        if (tty->has_flag(tty_flag_CUTSC)) {
             flip_buffer_y((uint*)buffer, (uint)style.width, (uint)style.height);
             image::saveToFile(output_file, image::createBitmap
                 ((uint)style.width, (uint)style.height, pixel_format_rgba, buffer));
             break;
+            tty->set_flag(tty_flag_CUTSC, false);
         }
         do if (tty->io() < 0) {
             running = 0;

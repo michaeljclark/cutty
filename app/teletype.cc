@@ -246,7 +246,6 @@ struct tty_teletype_impl : tty_teletype
     uint argv[5];
     uint fd;
     uchar needs_update;
-    uchar needs_capture;
     std::string osc_data;
 
     std::vector<uchar> in_buf;
@@ -286,8 +285,6 @@ struct tty_teletype_impl : tty_teletype
     virtual void close();
     virtual bool get_needs_update();
     virtual void set_needs_update();
-    virtual bool get_needs_capture();
-    virtual void set_needs_capture();
     virtual void update_offsets();
     virtual tty_log_loc visible_to_logical(llong vrow);
     virtual tty_vis_loc logical_to_visible(llong lline);
@@ -389,7 +386,6 @@ tty_teletype_impl::tty_teletype_impl() :
     argv{},
     fd(-1),
     needs_update(1),
-    needs_capture(0),
     osc_data(),
     in_buf(),
     in_start(0),
@@ -439,18 +435,6 @@ bool tty_teletype_impl::get_needs_update()
 void tty_teletype_impl::set_needs_update()
 {
     needs_update |= true;
-}
-
-bool tty_teletype_impl::get_needs_capture()
-{
-    bool flag = needs_capture;
-    needs_capture = false;
-    return flag;
-}
-
-void tty_teletype_impl::set_needs_capture()
-{
-    needs_capture |= true;
 }
 
 static llong trace_counter;
@@ -1429,11 +1413,19 @@ void tty_teletype_impl::handle_osc(uint c)
 {
     Trace("handle_osc: %s %s\n",
         args_str().c_str(), char_str(c).c_str());
-    if (argc == 1 && argv[0] == 555) {
-        Trace("osc: screen-capture\n");
-        set_needs_capture();
-    } else if (argc == 1 && argv[0] == 556) {
-        hist.dump_stats();
+    for (size_t i = 0; i < argc; i++) {
+        switch (opt_arg(i, 0)) {
+        case 555:
+            Trace("handle_osc: screen_capture\n");
+            set_flag(tty_flag_CUTSC, true);
+            break;
+        case 556:
+            Trace("handle_osc: dump_stats\n");
+            hist.dump_stats();
+            break;
+        default:
+            Trace("handle_osc: %d unimplemented\n", opt_arg(i, 0));
+        }
     }
 }
 
