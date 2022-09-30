@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cerrno>
 #include <climits>
+#include <cctype>
 
 #include <functional>
 #include <algorithm>
@@ -116,7 +117,7 @@ struct tty_cellgrid_impl : tty_cellgrid
     void draw_scrollbars(draw_list &batch);
 
     virtual void draw(draw_list &batch);
-
+    virtual void write_sbox(std::string filename);
     virtual bool has_flag(uint f);
     virtual void set_flag(uint f, bool val);
     virtual const char* get_lang();
@@ -672,6 +673,54 @@ void tty_cellgrid_impl::draw(draw_list &batch)
     if ((flags & tty_cellgrid_scrollbars) > 0) {
         draw_scrollbars(batch);
     }
+}
+
+void tty_cellgrid_impl::write_sbox(std::string filename)
+{
+    FILE *out;
+    tty_winsize ws = get_winsize();
+    int rows = ws.vis_rows, cols = ws.vis_cols;
+    std::vector<std::string> lines(rows);
+
+    /* extract screen layout */
+    llong total_rows = tty->total_rows();
+    llong scroll_row = tty->scroll_row();
+    llong offset = total_rows < rows ? rows - total_rows : 0;
+    for (llong j = total_rows - 1 - scroll_row + offset, l = 0; l < rows; j--, l++)
+    {
+        if (j < 0 || j >= total_rows) continue;
+
+        tty_log_loc loff = tty->visible_to_logical(j);
+        size_t k = loff.lline, o = loff.loff;
+        tty_line line = tty->get_line(k);
+        size_t limit = std::min(o + cols, line.cells.size());
+
+        for (size_t i = o; i < limit; i++) {
+            tty_cell &cell = line.cells[i];
+            char u[8];
+            size_t b = utf32_to_utf8(u, sizeof(u), cell.codepoint);
+            lines[rows-l-1].append(std::string(u, b));
+        }
+    }
+
+    /* write sbox file */
+    if ((out = fopen(filename.c_str(), "wb")) == NULL) {
+        Panic("write_sbox: error: %s\n", strerror(errno));
+    }
+    for (auto i = lines.begin(); i != lines.end(); i++)
+    {
+        auto si = std::find_if(i->begin(), i->end(),
+            [](int c) {return !std::isspace(c);});
+        auto ei = std::find_if(i->rbegin(), i->rend(),
+            [](int c) {return !std::isspace(c);}).base();
+        if (std::distance(si, ei) > 0) {
+            fprintf(out, "%zu,%zu \"%s\"\n",
+                1 + std::distance(lines.begin(), i),
+                1 + std::distance(i->begin(), si),
+                std::string(si, ei).c_str());
+        }
+    }
+    fclose(out);
 }
 
 static GLFWcursor *ibeam_cursor = NULL;

@@ -43,7 +43,7 @@ struct tty_cellgrid
     virtual ~tty_cellgrid() = default;
 
     virtual void draw(draw_list &batch) = 0;
-
+    virtual void write_sbox(std::string filename) = 0;
     virtual bool has_flag(uint f) = 0;
     virtual void set_flag(uint f, bool val) = 0;
     virtual const char* get_lang() = 0;

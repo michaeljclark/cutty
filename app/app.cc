@@ -258,6 +258,9 @@ static void window_size(GLFWwindow* window, int w, int h)
 
 static void tty_app(int argc, char **argv)
 {
+    int framebuffer_width, framebuffer_height;
+    int window_width, window_height;
+
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, CTX_OPENGL_MAJOR);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, CTX_OPENGL_MINOR);
@@ -273,21 +276,12 @@ static void tty_app(int argc, char **argv)
     }
 
     tty = std::unique_ptr<tty_teletype>(tty_new());
-    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get()));
-    render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
     process = std::unique_ptr<tty_process>(tty_process_new());
-    render->set_overlay(overlay_stats);
-
-    if (enable_timestamps) {
-        cg->set_flag(tty_cellgrid_timestamps, true);
-    }
-    if (enable_linenumbers) {
-        cg->set_flag(tty_cellgrid_linenumbers, true);
-    }
-    if (enable_scrollbars) {
-        cg->set_flag(tty_cellgrid_scrollbars, true);
-    }
-
+    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get()));
+    cg->set_flag(tty_cellgrid_timestamps, enable_timestamps);
+    cg->set_flag(tty_cellgrid_linenumbers, enable_linenumbers);
+    cg->set_flag(tty_cellgrid_scrollbars, enable_scrollbars);
+    tty_winsize dim = cg->get_winsize();
     tty_style style = cg->get_style();
 
     window = glfwCreateWindow((int)style.width, (int)style.height, app_name, NULL, NULL);
@@ -305,25 +299,20 @@ static void tty_app(int argc, char **argv)
     glfwSetWindowRefreshCallback(window, window_refresh);
     glfwSetWindowPosCallback(window, window_pos);
     glfwSetWindowSizeCallback(window, window_size);
-
-    int framebuffer_width, framebuffer_height;
-    int window_width, window_height;
     glfwGetWindowSize(window, &window_width, &window_height);
     glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
-    float scale = sqrtf((float)(framebuffer_width * framebuffer_height) /
-                       (float)(window_width * window_height));
 
     init_keymap();
     init_cursors();
-    render->initialize();
 
+    render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
+    render->set_overlay(overlay_stats);
+    render->initialize();
     reshape();
-    tty_winsize dim = cg->get_winsize();
+
     tty->set_winsize(dim);
     tty->reset();
-
-    int fd = process->exec(dim, exec_path, exec_argv, true /* fixme */);
-    tty->set_fd(fd);
+    tty->set_fd(process->exec(dim, exec_path, exec_argv, true /* fixme */));
 
     while (!glfwWindowShouldClose(window)) {
         render->update();

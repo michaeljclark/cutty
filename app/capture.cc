@@ -51,7 +51,9 @@ static std::unique_ptr<tty_process> process;
 static bool help_text = false;
 static bool overlay_stats = false;
 static bool execute_args = false;
-static std::string output_file = "capture.png";
+static bool enable_render = false;
+static std::string output_image_file;
+static std::string output_sbox_file;
 
 static const char* default_path = "bash";
 static const char * const default_argv[] = { "-bash", NULL };
@@ -104,37 +106,41 @@ static void flip_buffer_y(uint* buffer, uint width, uint height)
 static void capture_app(int argc, char **argv)
 {
     tty = std::unique_ptr<tty_teletype>(tty_new());
-    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get(), true));
-    render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
     process = std::unique_ptr<tty_process>(tty_process_new());
-    render->set_overlay(overlay_stats);
+    cg = std::unique_ptr<tty_cellgrid>(tty_cellgrid_new(&manager, tty.get(), true));
     cg->set_flag(tty_cellgrid_background, false);
     cg->set_flag(tty_cellgrid_scrollbars, false);
-
-    tty_style style = cg->get_style();
-    osmesa_init((uint)style.width, (uint)style.height);
-
-    render->initialize();
-    render->reshape(style.width, style.height);
-
     tty_winsize dim = cg->get_winsize();
+    tty_style style = cg->get_style();
+
+    if (enable_render) {
+        osmesa_init((uint)style.width, (uint)style.height);
+        render = std::unique_ptr<tty_render>(tty_render_new(&manager, cg.get()));
+        render->initialize();
+        render->reshape(style.width, style.height);
+    }
+
     tty->set_winsize(dim);
     tty->reset();
-
-    int fd = process->exec(dim, exec_path, exec_argv);
-    tty->set_fd(fd);
+    tty->set_fd(process->exec(dim, exec_path, exec_argv));
 
     uint running = 1;
     while (running) {
-        render->update();
-        render->display();
-        glFlush();
+        if (enable_render) {
+            render->update();
+            render->display();
+            glFlush();
+        }
         if (tty->has_flag(tty_flag_CUTSC)) {
-            flip_buffer_y((uint*)buffer, (uint)style.width, (uint)style.height);
-            image::saveToFile(output_file, image::createBitmap
-                ((uint)style.width, (uint)style.height, pixel_format_rgba, buffer));
+            if (output_image_file.size() > 0) {
+                flip_buffer_y((uint*)buffer, (uint)style.width, (uint)style.height);
+                image::saveToFile(output_image_file, image::createBitmap
+                    ((uint)style.width, (uint)style.height, pixel_format_rgba, buffer));
+            }
+            if (output_sbox_file.size() > 0) {
+                cg->write_sbox(output_sbox_file);
+            }
             break;
-            tty->set_flag(tty_flag_CUTSC, false);
         }
         do if (tty->io() < 0) {
             running = 0;
@@ -144,8 +150,10 @@ static void capture_app(int argc, char **argv)
 
     tty->close();
 
-    OSMesaDestroyContext(ctx);
-    free(buffer);
+    if (enable_render) {
+        OSMesaDestroyContext(ctx);
+        free(buffer);
+    }
 }
 
 /* help text */
@@ -158,8 +166,8 @@ void print_help(int argc, char **argv)
         "  -t, --trace               log trace messages\n"
         "  -d, --debug               log debug messages\n"
         "  -x, --execute             execute remaining args\n"
-        "  -o, --output              capture output filename\n"
-        "  -y, --overlay-stats       show statistics overlay\n"
+        "  -o, --output              capture image filename\n"
+        "  -s, --sbox                capture sbox filename\n"
         "  -m, --enable-msdf         enable MSDF font rendering\n",
         argv[0]);
 }
@@ -197,10 +205,10 @@ void parse_options(int argc, char **argv)
             i++;
         } else if (match_opt(argv[i], "-o", "--output")) {
             if (check_param(++i == argc, "--output")) break;
-            output_file = argv[i++];
-        } else if (match_opt(argv[i], "-y", "--overlay-stats")) {
-            overlay_stats = true;
-            i++;
+            output_image_file = argv[i++];
+        } else if (match_opt(argv[i], "-s", "--sbox")) {
+            if (check_param(++i == argc, "--sbox")) break;
+            output_sbox_file = argv[i++];
         } else if (match_opt(argv[i], "-m", "--enable-msdf")) {
             manager.msdf_enabled = true;
             manager.msdf_autoload = true;
@@ -225,6 +233,10 @@ void parse_options(int argc, char **argv)
         exec_vec.push_back(NULL);
         exec_path = exec_vec[0];
         exec_argv = exec_vec.data();
+    }
+
+    if (output_image_file.size() > 0) {
+        enable_render = true;
     }
 
     if (help_text) {
