@@ -265,7 +265,7 @@ tty_winsize tty_cellgrid_impl::get_winsize()
 
     cols = std::max(20, cols);
 
-    return tty_winsize { rows, cols, (int)style.width, (int)style.height };
+    return tty_winsize { rows, cols, (int)available_width, (int)available_height };
 }
 
 const char* tty_cellgrid_impl::get_lang() { return text_lang; }
