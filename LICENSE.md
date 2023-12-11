@@ -1,4 +1,6 @@
-Copyright (C) 2019, Michael Clark <michaeljclark@mac.com>
+MIT License
+
+Copyright (C) 2019-2023, Michael Clark <michaeljclark@mac.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
