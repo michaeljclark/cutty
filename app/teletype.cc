@@ -763,7 +763,7 @@ void tty_teletype_impl::update_offsets()
         vlstart = tty_int48_get(loff.vrow) + tty_int48_get(loff.count);
     }
 
-    /* count lines with wrap incrementally from min row */
+    /* count lines with wrap incrementally from min_line*/
     vl = vlstart;
     for (llong k = min_line; k < hist.lines.size(); k++) {
         llong cell_count = hist.count_cells(k);
@@ -772,7 +772,7 @@ void tty_teletype_impl::update_offsets()
         vl += wrap_count;
     }
 
-    /* write out indices incrementally from min row */
+    /* write out indices incrementally from min_line */
     hist.voffsets.resize(vl);
     hist.loffsets.resize(hist.lines.size());
     vl = vlstart;
