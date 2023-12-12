@@ -89,9 +89,7 @@ tty_render_opengl::tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg)
 : manager(manager), cg(cg), frame_times{},
   shape_tb(), edge_tb(), brush_tb(),
   prog_flat(), prog_texture(), prog_msdf(), prog_canvas(),
-  vao(0), vbo(0), ibo(0),
-  tex_map(), batch(), mvp{}, //ctx{},
-  //canvas(manager), /* ui(manager, &canvas), */
+  vao(0), vbo(0), ibo(0), tex_map(), batch(), mvp{},
   overlay_stats(false) {}
 
 tty_render_opengl::~tty_render_opengl() {}
