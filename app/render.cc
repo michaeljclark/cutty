@@ -49,40 +49,40 @@ struct circular_buffer
 
 struct tty_render_opengl : tty_render
 {
-	font_manager_ft *manager;
-	tty_cellgrid *cg;
-	circular_buffer frame_times;
-	texture_buffer shape_tb;
-	texture_buffer edge_tb;
-	texture_buffer brush_tb;
-	program prog_flat;
-	program prog_texture;
-	program prog_msdf;
-	program prog_canvas;
-	GLuint vao;
-	GLuint vbo;
-	GLuint ibo;
-	std::map<int,GLuint> tex_map;
-	draw_list batch;
-	mat4 mvp;
-	bool overlay_stats;
+    font_manager_ft *manager;
+    tty_cellgrid *cg;
+    circular_buffer frame_times;
+    texture_buffer shape_tb;
+    texture_buffer edge_tb;
+    texture_buffer brush_tb;
+    program prog_flat;
+    program prog_texture;
+    program prog_msdf;
+    program prog_canvas;
+    GLuint vao;
+    GLuint vbo;
+    GLuint ibo;
+    std::map<int,GLuint> tex_map;
+    draw_list batch;
+    mat4 mvp;
+    bool overlay_stats;
 
-	tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg);
-	virtual ~tty_render_opengl();
+    tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg);
+    virtual ~tty_render_opengl();
 
-	virtual void set_overlay(bool val);
+    virtual void set_overlay(bool val);
 
-	virtual void update();
-	virtual void display();
-	virtual void reshape(int width, int height);
-	virtual void initialize();
+    virtual void update();
+    virtual void display();
+    virtual void reshape(int width, int height);
+    virtual void initialize();
 
 protected:
     void create_layout();
-	program* cmd_shader_gl(int cmd_shader);
-	std::vector<std::string> get_stats();
-	void render_stats(draw_list &batch);
-	void update_uniforms(program *prog);
+    program* cmd_shader_gl(int cmd_shader);
+    std::vector<std::string> get_stats();
+    void render_stats(draw_list &batch);
+    void update_uniforms(program *prog);
 };
 
 tty_render_opengl::tty_render_opengl(font_manager_ft *manager, tty_cellgrid *cg)
@@ -96,7 +96,7 @@ tty_render_opengl::~tty_render_opengl() {}
 
 tty_render* tty_render_new(font_manager_ft *manager, tty_cellgrid *cg)
 {
-	return new tty_render_opengl(manager, cg);
+    return new tty_render_opengl(manager, cg);
 }
 
 static void circular_buffer_add(circular_buffer *buffer, llong new_value)
