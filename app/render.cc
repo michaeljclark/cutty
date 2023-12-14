@@ -129,7 +129,7 @@ void tty_render_opengl::set_overlay(bool val) { overlay_stats = val; }
 std::vector<std::string> tty_render_opengl::get_stats()
 {
     std::vector<std::string> stats;
-    stats.push_back(format("FPS: %4.1f",
+    stats.push_back(format_string("FPS: %4.1f",
         1e9 / circular_buffer_average(&frame_times)));
     return stats;
 }
